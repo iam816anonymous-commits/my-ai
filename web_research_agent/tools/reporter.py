@@ -1,10 +1,14 @@
 from typing import List
 from web_research_agent.models.llm import LLMClient
 from web_research_agent.models.schemas import ArticleSummary, ResearchPlan
+import logging
+
+logger = logging.getLogger(__name__)
 
 def generate_final_report(summaries: List[ArticleSummary], plan: ResearchPlan, llm_client: LLMClient) -> str:
     """
     Combines summaries into a final Markdown report using LLM for synthesis.
+    Includes a fallback mechanism if LLM synthesis fails after retries.
     """
     combined_summaries = ""
     references = "\n## References\n\n"
@@ -16,14 +20,41 @@ def generate_final_report(summaries: List[ArticleSummary], plan: ResearchPlan, l
         combined_summaries += f"### Source {i}\nSource: {url}\n\n{summary}\n\n---\n\n"
         references += f"- {url}\n"
 
-    final_report_content = llm_client.generate_report(
-        summaries=combined_summaries,
-        objectives=plan.objectives,
-        topic=plan.topic
-    )
+    try:
+        final_report_content = llm_client.generate_report(
+            summaries=combined_summaries,
+            objectives=plan.objectives,
+            topic=plan.topic
+        )
 
-    # Ensure references are at the end if not already included by LLM
-    if "## References" not in final_report_content:
-        final_report_content += references
+        # Ensure references are at the end if not already included by LLM
+        if "## References" not in final_report_content:
+            final_report_content += references
 
-    return final_report_content
+        return final_report_content
+
+    except Exception as e:
+        logger.error(f"Persistent failure in LLM report synthesis: {str(e)}. Generating fallback report.")
+        return generate_fallback_report(combined_summaries, plan, references)
+
+def generate_fallback_report(summaries_text: str, plan: ResearchPlan, references_text: str) -> str:
+    """
+    Generates a basic Markdown report if LLM synthesis fails.
+    """
+    report = f"""# Research Report: {plan.topic} (Fallback)
+
+## Executive Summary
+This report was generated using a fallback mechanism because the automated synthesis failed. It contains the raw summaries of the researched sources.
+
+## Research Objectives
+{"".join([f"- {obj}\n" for obj in plan.objectives])}
+
+## Source Summaries
+{summaries_text}
+
+## Conclusion
+Research concluded with {len(plan.objectives)} objectives. Please review the source summaries above for details.
+
+{references_text}
+"""
+    return report

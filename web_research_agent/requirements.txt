@@ -1,9 +1,10 @@
 requests
 beautifulsoup4
 trafilatura
-duckduckgo-search
+ddgs
 pydantic
 rich
 typer
 python-dotenv
 openai
+tenacity

@@ -1,21 +1,28 @@
 import logging
 from openai import OpenAI
 from web_research_agent.config import API_KEY, BASE_URL, MODEL_NAME
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
 class LLMClient:
     def __init__(self):
+        if not API_KEY:
+             logger.error("API_KEY not found in environment variables.")
         self.client = OpenAI(
             api_key=API_KEY,
             base_url=BASE_URL
         )
         self.model = MODEL_NAME
 
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     def summarize(self, text: str) -> str:
         """
-        Summarizes the given text using the LLM.
+        Summarizes the given text using the LLM. Retries up to 3 times.
         """
+        if not text:
+            return "No content to summarize."
+
         prompt = f"""
         Summarize the following article text.
         Your summary must include:
@@ -28,7 +35,7 @@ class LLMClient:
         Format the output in Markdown.
 
         Article Text:
-        {text}
+        {text[:12000]} # Basic truncation to avoid token limits
         """
         try:
             response = self.client.chat.completions.create(
@@ -39,14 +46,19 @@ class LLMClient:
                 ],
                 temperature=0.3
             )
-            return response.choices[0].message.content
+            content = response.choices[0].message.content
+            if not content:
+                raise ValueError("LLM returned empty summary.")
+            return content
         except Exception as e:
-            logger.error(f"LLM Summarization failed: {e}")
-            return "Summarization failed."
+            logger.error(f"LLM Summarization attempt failed: {str(e)}")
+            raise e
 
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     def generate_report(self, summaries: str, objectives: list, topic: str) -> str:
         """
         Generates a final report from multiple article summaries and research objectives.
+        Retries up to 3 times.
         """
         objectives_str = "\n".join([f"- {obj}" for obj in objectives])
         prompt = f"""
@@ -64,22 +76,22 @@ class LLMClient:
         (List the objectives addressed in this research)
 
         ## Methodology
-        (Describe the research process: multiple web searches, content extraction, and LLM-based summarization and synthesis)
+        (Describe the research process: planning, targeted searches, content extraction, and LLM-based synthesis)
 
         ## Source Summaries
-        (Incorporate the provided summaries here, organized logically by subtopic if possible)
+        (Incorporate the provided summaries here, organized logically by subtopic)
 
         ## Final Conclusion
         (Synthesize all information into a final conclusion)
 
         ## Coverage Summary
-        (Discuss how well the research objectives were met based on the available sources)
+        (Discuss how well the research objectives were met)
 
         ## Confidence Score
-        (Provide a confidence score from 0.0 to 1.0 based on the quality and diversity of sources)
+        (Provide a confidence score from 0.0 to 1.0)
 
         ## Known Gaps
-        (Identify areas that were not fully covered or require further research)
+        (Identify areas that require further research)
 
         Summaries:
         {summaries}
@@ -95,7 +107,10 @@ class LLMClient:
                 ],
                 temperature=0.4
             )
-            return response.choices[0].message.content
+            content = response.choices[0].message.content
+            if not content:
+                raise ValueError("LLM returned empty report.")
+            return content
         except Exception as e:
-            logger.error(f"LLM Report generation failed: {e}")
-            return "Report generation failed."
+            logger.error(f"LLM Report generation attempt failed: {str(e)}")
+            raise e

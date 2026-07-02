@@ -1,25 +1,31 @@
 import logging
 import trafilatura
 from bs4 import BeautifulSoup
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
+@retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=1, max=5))
 def extract_text(html: str) -> str:
     """
     Extracts main article text from HTML using trafilatura with BeautifulSoup fallback.
+    Retries up to 2 times on internal errors.
     """
-    if not html:
+    if not html or len(html) < 100:
+        logger.warning("Empty or too short HTML provided for extraction.")
         return ""
 
-    # Try trafilatura first
-    # trafilatura.extract might return None if it can't find clear article structure
-    extracted = trafilatura.extract(html, include_comments=False, include_tables=True, no_fallback=True)
-
-    if extracted:
-        return extracted
-
-    # Fallback to BeautifulSoup
     try:
+        # Try trafilatura first
+        # trafilatura.extract is the main API
+        extracted = trafilatura.extract(html, include_comments=False, include_tables=True, no_fallback=True)
+
+        if extracted and len(extracted) > 200:
+            return extracted
+
+        logger.info("Trafilatura extraction failed or too short, falling back to BeautifulSoup.")
+
+        # Fallback to BeautifulSoup
         soup = BeautifulSoup(html, "html.parser")
 
         # Remove scripts, styles, and common navigation/footer elements
@@ -27,9 +33,9 @@ def extract_text(html: str) -> str:
             element.decompose()
 
         # Also look for common classes/ids that usually contain nav/footer if they are not using semantic tags
-        for unwanted in soup.find_all(attrs={"class": lambda x: x and any(word in x.lower() for word in ["nav", "footer", "sidebar", "menu", "ads"])}):
+        for unwanted in soup.find_all(attrs={"class": lambda x: x and any(word in str(x).lower() for word in ["nav", "footer", "sidebar", "menu", "ads"])}):
             unwanted.decompose()
-        for unwanted in soup.find_all(attrs={"id": lambda x: x and any(word in x.lower() for word in ["nav", "footer", "sidebar", "menu", "ads"])}):
+        for unwanted in soup.find_all(attrs={"id": lambda x: x and any(word in str(x).lower() for word in ["nav", "footer", "sidebar", "menu", "ads"])}):
             unwanted.decompose()
 
         # Get text
@@ -37,8 +43,14 @@ def extract_text(html: str) -> str:
 
         # Basic cleaning
         lines = [line.strip() for line in text.splitlines() if line.strip()]
-        return "\n".join(lines)
+        clean_text = "\n".join(lines)
+
+        if len(clean_text) < 100:
+            logger.warning("Extracted text is too short even after fallback.")
+            return ""
+
+        return clean_text
 
     except Exception as e:
-        logger.error(f"BeautifulSoup extraction failed: {e}")
-        return ""
+        logger.error(f"Extraction attempt failed: {str(e)}")
+        raise e
