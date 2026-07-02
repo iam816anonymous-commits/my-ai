@@ -1,22 +1,52 @@
 import logging
 from web_research_agent.models.llm import LLMClient
-from web_research_agent.models.schemas import ResearchPlan
+from web_research_agent.models.schemas import ResearchPlan, QueryIntent
 import json
 
 logger = logging.getLogger(__name__)
 
 def generate_research_plan(query: str, llm_client: LLMClient) -> ResearchPlan:
-    """Generates a research plan."""
-    sys_prompt = "Short JSON only."
-    prompt = f"Plan research for: {query}. JSON: topic, objectives (5-7), queries (5-7)."
+    """
+    Detects query intent and generates a strategic research plan with multiple objectives.
+    """
+    sys_prompt = "You are a professional research planner. Analyze the query and output a structured JSON plan."
+
+    prompt = f"""
+    Analyze the user query: "{query}"
+
+    1. Determine the intent: Biography, Technology, Programming, Finance, Medical, Cybersecurity, History, Business, or General.
+    2. Generate 6-10 specific research objectives tailored to this intent.
+    3. Generate 6-10 high-precision search queries.
+
+    Return JSON:
+    {{
+        "topic": "Concise topic name",
+        "intent": "Detected Category",
+        "objectives": ["Objective 1", "Objective 2", ...],
+        "queries": ["Search query 1", "Search query 2", ...]
+    }}
+    """
 
     try:
         data = llm_client.get_json(prompt, sys_prompt)
-        # Ensure it meets basic requirements
-        if 'topic' not in data: data['topic'] = query
-        if 'objectives' not in data: data['objectives'] = [f"Research {query}"]
-        if 'queries' not in data: data['queries'] = [query]
+
+        # Ensure intent is a valid QueryIntent
+        intent_str = data.get("intent", "General").upper()
+        try:
+            intent = QueryIntent[intent_str]
+        except KeyError:
+            # Fallback for common mismatches
+            if "TECH" in intent_str: intent = QueryIntent.TECHNOLOGY
+            elif "SECURITY" in intent_str: intent = QueryIntent.CYBERSECURITY
+            else: intent = QueryIntent.GENERAL
+
+        data["intent"] = intent
         return ResearchPlan(**data)
     except Exception as e:
-        logger.error(f"Failed to generate plan: {e}")
-        return ResearchPlan(topic=query, objectives=[f"Research {query}"], queries=[query])
+        logger.error(f"Planning failed: {e}")
+        return ResearchPlan(
+            topic=query,
+            intent=QueryIntent.GENERAL,
+            objectives=[f"General overview of {query}", "Key stakeholders", "Current status", "Challenges", "Future outlook"],
+            queries=[query, f"{query} details", f"{query} analysis", f"{query} research"]
+        )

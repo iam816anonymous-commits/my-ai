@@ -1,7 +1,10 @@
-from typing import List, Dict
-from web_research_agent.models.llm import LLMClient
-from web_research_agent.models.schemas import ArticleSummary, ResearchPlan, Contradiction
 import logging
+from typing import List, Dict, Optional
+from web_research_agent.models.llm import LLMClient
+from web_research_agent.models.schemas import (
+    ArticleSummary, ResearchPlan, Contradiction,
+    EvidenceItem, SelfEvaluation, ResearchReport
+)
 
 logger = logging.getLogger(__name__)
 
@@ -9,99 +12,80 @@ def generate_final_report(
     summaries: List[ArticleSummary],
     plan: ResearchPlan,
     llm_client: LLMClient,
-    iterations: int = 1,
-    coverage: Dict[str, float] = None,
-    contradictions: List[Contradiction] = None,
-    confidence_score: float = 0.0
-) -> str:
-    """
-    Generates a professional research report by synthesizing multiple sources.
-    """
-    coverage = coverage or {}
-    contradictions = contradictions or []
-
-    # Condense summaries for synthesis
-    condensed_summaries = ""
-    for i, s in enumerate(summaries, 1):
-        condensed_summaries += f"SOURCE {i} ({s.url}):\n{s.summary}\n\n"
-
-    prompt = f"""
-    Topic: {plan.topic}
-    Research Objectives: {plan.objectives}
-    Collected Evidence:
-    {condensed_summaries[:8000]}
-
-    Task: Write a professional research report.
-    - DO NOT just list summaries.
-    - Synthesize information across sources for each section.
-    - Use a formal, analytical tone.
-    - Identify areas of agreement and disagreement.
-    - Ensure clear structure.
-
-    Required Structure:
-    # {plan.topic}
-    ## Executive Summary
-    ## Key Findings
-    ## Background
-    ## Detailed Analysis
-    ## Supporting Evidence
-    ## Contradictions
-    ## Limitations
-    ## Confidence Assessment
-    ## References
-
-    Confidence Score: {confidence_score}/100
-    Coverage Data: {coverage}
-    """
-    sys_prompt = "You are a senior research analyst. Write a high-quality, synthesized report. Avoid repetition. Do not mention 'Source A says'. Write naturally."
-
-    try:
-        report = llm_client.call(prompt, sys_prompt)
-        # Ensure references are present
-        if "## References" not in report:
-            report += "\n\n## References\n" + "\n".join([f"- {s.url}" for s in summaries])
-        return report
-    except Exception as e:
-        logger.warning(f"LLM Report synthesis failed: {e}. Generating fallback report.")
-        from web_research_agent.tools.reporter import generate_no_llm_fallback_report
-        return generate_no_llm_fallback_report(plan, summaries, iterations, coverage, contradictions, confidence_score)
-
-def generate_no_llm_fallback_report(
-    plan: ResearchPlan,
-    summaries: List[ArticleSummary],
-    iterations: int,
-    coverage: Dict[str, float],
+    evidence_items: List[EvidenceItem],
     contradictions: List[Contradiction],
     confidence_score: float
 ) -> str:
-    """Generates a structured report.md without LLM."""
-    sections = [
-        f"# Research Report: {plan.topic}",
-        "## Executive Summary",
-        "This report is an automated synthesis of collected research data. Detailed analysis is provided below.",
-        "## Key Findings",
-        "Findings are based on the following sources. See 'Supporting Evidence' for details.",
-        "## Research Objectives",
-        "\n".join([f"- {obj}: {coverage.get(obj, 0.0)}% coverage" for obj in plan.objectives]),
-        "## Methodology",
-        f"Professional iterative research process completed over {iterations} cycles.",
-        "## Supporting Evidence"
-    ]
+    """
+    Synthesis engine that produces a Gartner/McKinsey style analytical report.
+    """
+    evidence_text = "\n".join([f"- {s.url}: {s.summary}" for s in summaries])
 
-    for s in summaries:
-        sections.append(f"### Evidence from {s.url}\n{s.summary}")
+    prompt = f"""
+    TOPIC: {plan.topic}
+    INTENT: {plan.intent}
+    OBJECTIVES: {plan.objectives}
+    RAW EVIDENCE:
+    {evidence_text[:12000]}
 
-    sections.append("## Contradictions")
-    if contradictions:
-        for c in contradictions:
-            sections.append(f"- **Conflict**: {c.claim_a} vs {c.claim_b}\n  Sources: {c.source_a}, {c.source_b}")
-    else:
-        sections.append("No significant contradictions were detected during the research process.")
+    TASK: Synthesize a professional research report.
+    - Style: Analytical, formal, concise (McKinsey/Gartner style).
+    - Synthesis: Cross-reference sources. DO NOT just list summaries.
+    - Connections: Contrast different viewpoints and highlight agreements.
 
-    sections.append("## Confidence Assessment")
-    sections.append(f"Final Research Confidence: {confidence_score}/100. This score reflects objective coverage and source reliability.")
+    REPORT STRUCTURE:
+    # Executive Summary (Bottom-line findings)
+    # Key Findings (Bullet points of core facts)
+    # Background (Context and history)
+    # Detailed Analysis (Synthesis of technical/thematic details)
+    # Supporting Evidence (Structured claims and sources)
+    # Contradictions (Conflicts and explanations)
+    # Limitations (Gaps in research)
+    # Confidence Assessment (Why the score is {confidence_score}/100)
+    # References
 
-    sections.append("## References")
-    sections.append("\n".join([f"- {s.url}" for s in summaries]))
+    Confidence Score: {confidence_score}/100
+    """
+    sys_prompt = "You are a senior research analyst. Output a high-fidelity, evidence-driven Markdown report."
 
-    return "\n\n".join(sections)
+    try:
+        return llm_client.call(prompt, sys_prompt)
+    except Exception as e:
+        logger.error(f"Report synthesis failed: {e}")
+        return "# Report Generation Failed\n\nPlease check logs for details."
+
+def run_self_evaluation(report_content: str, plan: ResearchPlan, llm_client: LLMClient) -> SelfEvaluation:
+    """
+    Automatically evaluates the quality of the generated report.
+    """
+    prompt = f"""
+    Analyze the following research report for quality and objectivity.
+    TOPIC: {plan.topic}
+    REPORT:
+    {report_content[:8000]}
+
+    Return JSON evaluation:
+    {{
+        "coverage_score": 0-100,
+        "evidence_score": 0-100,
+        "readability_score": 0-100,
+        "citation_quality": 0-100,
+        "objectivity": 0-100,
+        "bias_risk": 0-100,
+        "novel_insights": 0-100,
+        "overall_grade": "A/B/C/D/F",
+        "justification": "Short reason for grade"
+    }}
+    """
+    sys_prompt = "You are an AI Quality Auditor. Be strict and objective."
+
+    try:
+        data = llm_client.get_json(prompt, sys_prompt)
+        return SelfEvaluation(**data)
+    except Exception as e:
+        logger.error(f"Self-evaluation failed: {e}")
+        return SelfEvaluation(
+            coverage_score=0, evidence_score=0, readability_score=0,
+            citation_quality=0, objectivity=0, bias_risk=0, novel_insights=0,
+            overall_grade="U", justification="Evaluation engine failed."
+        )

@@ -2,6 +2,8 @@ import logging
 import trafilatura
 from bs4 import BeautifulSoup
 import re
+from typing import List, Dict
+from concurrent.futures import ThreadPoolExecutor
 from web_research_agent.config import MAX_ARTICLE_CHARS
 
 logger = logging.getLogger(__name__)
@@ -9,78 +11,71 @@ logger = logging.getLogger(__name__)
 def clean_html(html: str) -> str:
     """
     Aggressively cleans HTML by removing non-article elements.
-    Preserves lists as they often contain valuable research data.
+    Wikipedia infoboxes, tables, and nav are removed.
     """
+    if not html: return ""
     soup = BeautifulSoup(html, "html.parser")
 
-    # Elements to remove
-    unwanted_tags = [
+    # Aggressive removal
+    unwanted = [
         "script", "style", "nav", "footer", "aside", "header", "form", "button",
-        "iframe", "table", "thead", "tbody", "tfoot", "tr", "th", "td"
+        "iframe", "table", "thead", "tbody", "tfoot", "tr", "th", "td",
+        "figure", "figcaption", "video", "audio", "input", "label"
     ]
-
-    for tag in soup.find_all(unwanted_tags):
+    for tag in soup.find_all(unwanted):
         tag.decompose()
 
-    # Remove by class/id (infoboxes, sidebar, etc)
-    unwanted_patterns = re.compile(
-        r"infobox|sidebar|nav|menu|footer|ad-|promo|social|comment|share|metadata|reference|reflist|mw-empty-elt",
+    # Class/ID patterns for professional noise removal
+    patterns = re.compile(
+        r"infobox|sidebar|nav|menu|footer|ad-|promo|social|comment|share|metadata|reference|reflist|mw-empty-elt|citation|hatnote|stub",
         re.I
     )
-
-    for element in soup.find_all(class_=unwanted_patterns):
-        element.decompose()
-    for element in soup.find_all(id=unwanted_patterns):
-        element.decompose()
+    for el in soup.find_all(attrs={"class": patterns}): el.decompose()
+    for el in soup.find_all(attrs={"id": patterns}): el.decompose()
 
     return str(soup)
 
 def deduplicate_text(text: str) -> str:
-    """
-    Removes duplicate paragraphs and sentences.
-    """
+    """Removes duplicate paragraphs/sentences."""
     paragraphs = text.split('\n\n')
-    seen_paragraphs = set()
-    unique_paragraphs = []
-
+    seen = set()
+    unique = []
     for p in paragraphs:
         p_clean = p.strip()
-        if not p_clean:
-            continue
-
-        # Simple similarity: normalize and check
-        p_norm = re.sub(r'\W+', '', p_clean.lower())
-        if p_norm not in seen_paragraphs:
-            seen_paragraphs.add(p_norm)
-            unique_paragraphs.append(p_clean)
-
-    return '\n\n'.join(unique_paragraphs)
+        if not p_clean: continue
+        norm = re.sub(r'\W+', '', p_clean.lower())
+        if norm not in seen:
+            seen.add(norm)
+            unique.append(p_clean)
+    return '\n\n'.join(unique)
 
 def extract_text(html: str) -> str:
-    """
-    Extracts article text with professional quality.
-    """
-    if not html:
-        return ""
-
+    """Extracts article text with high precision."""
+    if not html: return ""
     try:
-        # Pre-clean HTML
-        cleaned_html = clean_html(html)
+        cleaned = clean_html(html)
+        # Using newer trafilatura API correctly
+        extracted = trafilatura.extract(cleaned, include_comments=False, include_tables=False, no_fallback=True)
 
-        # Try trafilatura
-        extracted = trafilatura.extract(cleaned_html, include_comments=False, include_tables=False, no_fallback=True)
-
-        if not extracted or len(extracted) < 200:
-            logger.info("Trafilatura failed or too short, falling back to BeautifulSoup.")
-            soup = BeautifulSoup(cleaned_html, "html.parser")
+        if not extracted or len(extracted) < 150:
+            soup = BeautifulSoup(cleaned, "html.parser")
             extracted = soup.get_text(separator="\n")
 
-        # Post-process
         clean_text = deduplicate_text(extracted)
-
-        # Token optimization
         return clean_text[:MAX_ARTICLE_CHARS]
-
     except Exception as e:
         logger.error(f"Extraction failed: {e}")
         return ""
+
+def extract_all(html_contents: Dict[str, str]) -> Dict[str, str]:
+    """Parallel extraction of multiple HTML documents."""
+    results = {}
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_url = {executor.submit(extract_text, html): url for url, html in html_contents.items()}
+        for future in future_to_url:
+            url = future_to_url[future]
+            try:
+                results[url] = future.result()
+            except:
+                results[url] = ""
+    return results
