@@ -14,37 +14,43 @@ def evaluate_research(
 ) -> ReasoningResult:
     """
     Analyzes collected summaries to determine if more research is needed.
+    Optimized for short prompts and robust parsing.
     """
-    summaries_joined = "\n---\n".join([f"Source: {s.url}\nSummary: {s.summary}" for s in summaries])
+    # Create a very condensed view of the knowledge for the LLM
+    knowledge_snapshot = "\n".join([f"- {s.url}: {s.summary[:200]}..." for s in summaries])
 
     prompt = f"""
     Topic: {plan.topic}
     Objectives: {plan.objectives}
-    Knowledge: {summaries_joined[:10000]}
+    Knowledge Snapshot: {knowledge_snapshot[:5000]}
 
-    Evaluate coverage. Return JSON:
-    - completed_objectives: [list]
-    - missing_objectives: [list]
-    - contradictions: [{{claim_a, claim_b, source_a, source_b, explanation}}]
-    - confidence: 0-100
-    - objective_coverage: {{objective: %}}
-    - follow_up_queries: [list of 3 queries]
-    - continue_research: bool
+    Task: Evaluate coverage. Return JSON:
+    {{
+        "completed_objectives": [],
+        "missing_objectives": [],
+        "contradictions": [{{ "claim_a": "", "claim_b": "", "source_a": "", "source_b": "", "explanation": "" }}],
+        "confidence": 0-100,
+        "objective_coverage": {{ "objective": 0.0 }},
+        "follow_up_queries": [],
+        "continue_research": bool
+    }}
     """
-    sys_prompt = "Reasoning agent. JSON only. Be critical."
+    sys_prompt = "Critical reasoning agent. JSON only."
 
     try:
         data = llm_client.get_json(prompt, sys_prompt)
-        # Basic validation of expected fields
-        required = ["completed_objectives", "missing_objectives", "objective_coverage", "continue_research"]
-        for field in required:
-            if field not in data:
-                raise ValueError(f"Missing field in reasoning: {field}")
+
+        # Ensure objective_coverage has all objectives
+        coverage = data.get("objective_coverage", {})
+        for obj in plan.objectives:
+            if obj not in coverage:
+                coverage[obj] = 0.0
+        data["objective_coverage"] = coverage
 
         return ReasoningResult(**data)
     except Exception as e:
-        logger.error(f"Reasoning failed: {e}")
-        # Default to stop if reasoning fails to avoid infinite loops or extra costs
+        logger.error(f"Reasoning evaluation failed: {e}")
+        # Default stop condition on persistent failure
         return ReasoningResult(
             completed_objectives=[],
             missing_objectives=plan.objectives,
@@ -60,14 +66,19 @@ def update_knowledge_base(
 ) -> List[KnowledgeBaseEntry]:
     """Adds new summaries to knowledge base (in-memory)."""
     for s in new_summaries:
-        # Simple heuristic: if summary mentions objective, it's covered
-        covered = [obj for obj in plan.objectives if any(word.lower() in s.summary.lower() for word in obj.split())]
+        # Heuristic: match keywords from objectives
+        covered = []
+        summary_lower = s.summary.lower()
+        for obj in plan.objectives:
+            keywords = [w.lower() for w in obj.split() if len(w) > 3]
+            if any(k in summary_lower for k in keywords):
+                covered.append(obj)
 
         kb.append(KnowledgeBaseEntry(
             summary=s.summary,
             source=s.url,
-            confidence=0.8, # Default
+            confidence=0.8,
             covered_objectives=covered,
-            supporting_evidence=s.summary[:200]
+            supporting_evidence=s.summary[:150]
         ))
     return kb

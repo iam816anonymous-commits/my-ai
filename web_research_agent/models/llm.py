@@ -1,6 +1,7 @@
 import logging
 import json
 import time
+import re
 from typing import Any, Dict, Optional, Union
 from openai import OpenAI
 from web_research_agent.config import API_KEY, BASE_URL, MODEL_NAME
@@ -31,7 +32,6 @@ class LLMClient:
         self.model = MODEL_NAME
 
     def _estimate_tokens(self, text: str) -> int:
-        # Very rough estimate: 1 token approx 4 chars
         return len(text) // 4
 
     def _parse_json_robustly(self, text: str) -> Dict[str, Any]:
@@ -40,19 +40,19 @@ class LLMClient:
             return json.loads(text)
         except json.JSONDecodeError:
             # Try to extract JSON from markdown block
-            import re
-            match = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL)
+            match = re.search(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL)
             if match:
                 try:
                     return json.loads(match.group(1))
                 except json.JSONDecodeError:
                     pass
 
-            # Very basic attempt to find something that looks like JSON
-            match = re.search(r'(\{.*\})', text, re.DOTALL)
-            if match:
+            # Find first { and last }
+            start = text.find('{')
+            end = text.rfind('}')
+            if start != -1 and end != -1:
                  try:
-                    return json.loads(match.group(1))
+                    return json.loads(text[start:end+1])
                  except json.JSONDecodeError:
                     pass
 
@@ -67,7 +67,6 @@ class LLMClient:
     def call(self, prompt: str, system_prompt: str = "Assistant", response_format: Optional[str] = None) -> str:
         """Generic call with retry and monitoring."""
         start_time = time.time()
-        prompt_size = self._estimate_tokens(prompt + system_prompt)
 
         try:
             kwargs = {
@@ -76,7 +75,7 @@ class LLMClient:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
                 ],
-                "temperature": 0.3
+                "temperature": 0.2
             }
             if response_format == "json":
                 kwargs["response_format"] = {"type": "json_object"}
@@ -84,30 +83,30 @@ class LLMClient:
             response = self.client.chat.completions.create(**kwargs)
             content = response.choices[0].message.content or ""
             latency = time.time() - start_time
-            response_size = self._estimate_tokens(content)
 
-            logger.info(f"LLM Call - Model: {self.model}, Latency: {latency:.2f}s, Prompt: ~{prompt_size}t, Response: ~{response_size}t")
+            logger.info(
+                f"LLM Call - Model: {self.model}, Latency: {latency:.2f}s, "
+                f"Prompt: ~{self._estimate_tokens(prompt + system_prompt)}t, "
+                f"Response: ~{self._estimate_tokens(content)}t"
+            )
             return content
 
         except Exception as e:
             err_msg = str(e)
-            if "429" in err_msg or "rate limit" in err_msg.lower():
-                logger.warning(f"Rate limit detected: {err_msg}")
+            # Detect 429, 503, etc.
+            if any(x in err_msg for x in ["429", "rate limit", "503", "overloaded", "timeout"]):
+                logger.warning(f"Retryable LLM error: {err_msg}")
                 raise LLMRateLimitError(err_msg)
-            elif "503" in err_msg or "overloaded" in err_msg.lower():
-                 logger.warning(f"Server overloaded (503): {err_msg}")
-                 raise LLMError(err_msg)
 
-            logger.error(f"LLM Call failed: {err_msg}")
+            logger.error(f"Non-retryable LLM error: {err_msg}")
             raise e
 
-    def get_json(self, prompt: str, system_prompt: str = "Return JSON only.") -> Dict[str, Any]:
-        """Get JSON with fallback parsing."""
-        content = self.call(prompt, system_prompt, response_format="json")
+    def get_json(self, prompt: str, system_prompt: str = "Return JSON.") -> Dict[str, Any]:
+        """Get JSON with robust parsing and retries."""
         try:
+            content = self.call(prompt, system_prompt, response_format="json")
             return self._parse_json_robustly(content)
         except Exception as e:
-             logger.warning(f"JSON parsing failed on first attempt, retrying without json_format: {e}")
-             # Retry once more but maybe without explicit JSON format if that helps some models
+             logger.warning(f"JSON attempt failed, retrying without json_format: {e}")
              content = self.call(prompt, system_prompt)
              return self._parse_json_robustly(content)

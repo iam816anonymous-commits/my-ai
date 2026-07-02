@@ -19,22 +19,34 @@ def generate_final_report(
     coverage = coverage or {}
     contradictions = contradictions or []
 
-    summary_text = "\n\n".join([f"### Source: {s.url}\n{s.summary}" for s in summaries])
-    references = "\n".join([f"- {s.url}" for s in summaries])
+    # Compress summaries for reporting to save tokens
+    summary_text = "\n\n".join([f"Source: {s.url}\nSummary: {s.summary[:500]}" for s in summaries])
 
     prompt = f"""
-    Write a research report for "{plan.topic}".
-    Objectives: {', '.join(plan.objectives)}
+    Topic: {plan.topic}
+    Objectives: {plan.objectives}
     Iterations: {iterations}
-    Summaries: {summary_text[:8000]} # Limit to save tokens
+    Coverage: {coverage}
+    Summaries: {summary_text[:6000]}
+
+    Write a comprehensive MD report. Include:
+    # {plan.topic}
+    ## Executive Summary
+    ## Research Objectives
+    ## Methodology
+    ## Source Summaries
+    ## Final Conclusion
+    ## Coverage Matrix
+    ## Contradictions
+    ## Evidence Summary
+    ## References
     """
-    sys_prompt = "Professional report. Markdown. Focus on synthesis."
+    sys_prompt = "Professional researcher. MD format. Concise."
 
     try:
-        report = llm_client.call(prompt, sys_prompt)
-        return report
+        return llm_client.call(prompt, sys_prompt)
     except Exception as e:
-        logger.warning(f"LLM Report generation failed: {e}. Using no-LLM fallback.")
+        logger.warning(f"LLM Report synthesis failed: {e}. Generating non-LLM report.")
         return generate_no_llm_fallback_report(plan, summaries, iterations, coverage, contradictions)
 
 def generate_no_llm_fallback_report(
@@ -47,25 +59,33 @@ def generate_no_llm_fallback_report(
     """Generates report.md without LLM."""
     sections = [
         f"# Research Report: {plan.topic}",
+        "## Executive Summary",
+        "This report was generated using a fallback mechanism. Automated synthesis was unavailable.",
         "## Research Objectives",
-        "\n".join([f"- {obj} ({coverage.get(obj, 0)}% coverage)" for obj in plan.objectives]),
+        "\n".join([f"- {obj}" for obj in plan.objectives]),
         "## Methodology",
-        f"Research performed over {iterations} iterations using automated web search and extraction.",
+        f"Automated iterative research ({iterations} cycles). Top {len(summaries)} sources processed.",
         "## Article Summaries"
     ]
 
     for s in summaries:
         sections.append(f"### {s.url}\n{s.summary}")
 
+    sections.append("## Coverage Matrix")
+    sections.append("\n".join([f"- {obj}: {coverage.get(obj, 0.0)}%" for obj in plan.objectives]))
+
     if contradictions:
-        sections.append("## Contradictions Detected")
+        sections.append("## Contradictions")
         for c in contradictions:
-            sections.append(f"- **Conflict**: {c.claim_a} VS {c.claim_b}\n  **Sources**: {c.source_a} AND {c.source_b}")
+            sections.append(f"- **Conflict**: {c.claim_a} vs {c.claim_b}\n  Sources: {c.source_a}, {c.source_b}")
+
+    sections.append("## Evidence Summary")
+    sections.append(f"Collected {len(summaries)} articles covering the research objectives.")
 
     sections.append("## References")
     sections.append("\n".join([f"- {s.url}" for s in summaries]))
 
     sections.append("## Limitations")
-    sections.append("This is a fallback report generated without LLM synthesis due to API unavailability.")
+    sections.append("Synthesis unavailable. Direct summaries provided.")
 
     return "\n\n".join(sections)
