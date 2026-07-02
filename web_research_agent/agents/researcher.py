@@ -1,17 +1,16 @@
 import logging
-import os
-from datetime import datetime
 from rich.console import Console
 from rich.table import Table
 from web_research_agent.config import LOGS_DIR, OUTPUT_DIR
 from web_research_agent.tools.search import search_web
 from web_research_agent.tools.browser import fetch_html
 from web_research_agent.tools.extractor import extract_text
-from web_research_agent.tools.summarizer import summarize_article
+from web_research_agent.tools.summarizer import summarize_article, generate_fallback_summary
 from web_research_agent.tools.reporter import generate_final_report
-from web_research_agent.tools.planner import generate_research_plan, get_fallback_plan
+from web_research_agent.tools.planner import generate_research_plan
+from web_research_agent.tools.reasoner import evaluate_research, update_knowledge_base
 from web_research_agent.models.llm import LLMClient
-from web_research_agent.models.schemas import ResearchState, ArticleSummary
+from web_research_agent.models.schemas import ResearchState, ArticleSummary, KnowledgeBaseEntry
 
 # Setup logging
 logging.basicConfig(
@@ -20,7 +19,6 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
-
 console = Console()
 
 class ResearchAgent:
@@ -29,133 +27,106 @@ class ResearchAgent:
 
     def run(self, query: str):
         state = ResearchState(query=query)
-        logger.info(f"Starting research for query: {query}")
-        console.print(f"[bold blue]Starting research for:[/bold blue] {query}")
+        console.print(f"[bold blue]Starting research:[/bold blue] {query}")
 
         # 1. Planning
-        console.print("[yellow]Planning research...[/yellow]")
-        try:
-            state.plan = generate_research_plan(query, self.llm_client)
-        except Exception as e:
-            logger.error(f"Intelligent planning failed after retries: {str(e)}. Using fallback plan.")
-            state.plan = get_fallback_plan(query)
+        console.print("[yellow]Planning...[/yellow]")
+        state.plan = generate_research_plan(query, self.llm_client)
 
-        logger.info(f"Research Plan: {state.plan}")
-        console.print(f"Generated [green]{len(state.plan.queries)}[/green] search queries.")
-        console.print(f"Objectives: [cyan]{len(state.plan.objectives)}[/cyan]")
+        # 2. Research Loop
+        max_iterations = 3
+        while state.iterations < max_iterations:
+            state.iterations += 1
+            console.print(f"\n[bold green]Iteration {state.iterations}/{max_iterations}[/bold green]")
 
-        # 2. Search
-        console.print("[yellow]Searching the web...[/yellow]")
-        urls = search_web(state.plan.queries, max_results_total=12)
-        state.sources_collected = urls
-        state.urls_found = len(urls)
-        logger.info(f"Found {len(urls)} unique URLs after filtering and scoring.")
-        console.print(f"Found [green]{len(urls)}[/green] high-quality URLs.")
+            # Determine queries: plan queries in iter 1, follow-up queries in later iters
+            current_queries = state.plan.queries if state.iterations == 1 else state.follow_up_queries
+            if not current_queries:
+                break
 
-        if not urls:
-            console.print("[red]No URLs found for the query. Research aborted.[/red]")
-            return
+            # Search
+            console.print(f"Searching...")
+            urls = search_web(current_queries, max_results_total=5)
+            # Filter URLs we already have
+            new_urls = [u for u in urls if u not in state.sources_collected]
+            state.sources_collected.extend(new_urls)
+            state.urls_found += len(new_urls)
 
-        # 3. Process each URL
-        for i, url in enumerate(urls, 1):
-            state.urls_processed += 1
-            console.print(f"[yellow]Processing ({i}/{len(urls)}):[/yellow] {url}")
+            # Process URLs
+            iteration_summaries = []
+            for url in new_urls:
+                console.print(f"Processing: {url}")
+                try:
+                    html = fetch_html(url)
+                    if not html: raise ValueError("No HTML")
+                    state.successful_downloads += 1
 
-            try:
-                # Download
-                html = fetch_html(url)
-                if not html:
-                    reason = "Failed to download HTML (empty or error)"
-                    logger.warning(f"{reason}: {url}")
-                    state.failed_pages.append({"url": url, "reason": reason})
-                    continue
-                state.successful_downloads += 1
+                    text = extract_text(html)
+                    if not text: raise ValueError("No Text")
+                    state.successful_extractions += 1
 
-                # Extract
-                text = extract_text(html)
-                if not text:
-                    reason = "Failed to extract meaningful text"
-                    logger.warning(f"{reason}: {url}")
-                    state.failed_pages.append({"url": url, "reason": reason})
-                    continue
-                state.successful_extractions += 1
+                    summary = summarize_article(text, self.llm_client)
+                    article_summary = ArticleSummary(url=url, summary=summary)
+                    iteration_summaries.append(article_summary)
+                    state.summaries.append(article_summary)
+                    state.successful_summaries += 1
+                except Exception as e:
+                    logger.warning(f"Failed {url}: {e}")
+                    state.failed_pages.append({"url": url, "reason": str(e)})
 
-                # Summarize
-                console.print(f"  [cyan]Summarizing...[/cyan]")
-                summary_text = summarize_article(text, self.llm_client)
-                if not summary_text or "failed" in summary_text.lower():
-                     reason = "Summarization failed"
-                     logger.warning(f"{reason}: {url}")
-                     state.failed_pages.append({"url": url, "reason": reason})
-                     continue
+            # Update Knowledge Base
+            state.knowledge_base = update_knowledge_base(state.knowledge_base, iteration_summaries, state.plan)
 
-                state.summaries.append(ArticleSummary(
-                    url=url,
-                    summary=summary_text
-                ))
-                state.successful_summaries += 1
-                logger.info(f"Successfully processed and summarized {url}")
+            # Reasoning
+            console.print("[yellow]Reasoning...[/yellow]")
+            reasoning = evaluate_research(query, state.plan, state.summaries, self.llm_client)
 
-            except Exception as e:
-                reason = f"Unexpected error: {str(e)}"
-                logger.error(f"{reason} while processing {url}")
-                console.print(f"  [red]Error processing {url}[/red]")
-                state.failed_pages.append({"url": url, "reason": reason})
-                continue
+            state.objective_coverage = reasoning.objective_coverage
+            state.contradictions.extend(reasoning.contradictions)
+            state.follow_up_queries = reasoning.follow_up_queries
+            state.confidence_score = reasoning.confidence / 100.0
 
-        if not state.summaries:
-            console.print("[red]Could not generate any summaries. Report aborted.[/red]")
-            return
+            # Stop conditions
+            if not reasoning.continue_research:
+                console.print("Objectives met. Stopping.")
+                break
 
-        # 4. Generate Report
-        console.print("[yellow]Generating final report...[/yellow]")
-        state.report_status = "generating"
-        report = generate_final_report(state.summaries, state.plan, self.llm_client)
+            if all(cov >= 90 for cov in state.objective_coverage.values()):
+                console.print("High coverage reached. Stopping.")
+                break
 
-        # 5. Save Report
+            if not new_urls:
+                console.print("No new sources found. Stopping.")
+                break
+
+        # 3. Report
+        console.print("[yellow]Generating report...[/yellow]")
+        report = generate_final_report(
+            state.summaries,
+            state.plan,
+            self.llm_client,
+            iterations=state.iterations,
+            coverage=state.objective_coverage,
+            contradictions=state.contradictions
+        )
+
+        # Save
         output_file = OUTPUT_DIR / "report.md"
-        try:
-            with open(output_file, "w", encoding="utf-8") as f:
-                f.write(report)
-            state.report_status = "completed"
-            logger.info(f"Report generated and saved to {output_file}")
-            console.print(f"[bold green]Research completed![/bold green] Report saved to {output_file}")
-        except Exception as e:
-            logger.error(f"Failed to save report to {output_file}: {e}")
-            console.print(f"[red]Failed to save report.[/red]")
-            state.report_status = "failed_to_save"
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(report)
 
-        # 6. Runtime Statistics
-        self._display_statistics(state)
+        console.print(f"[bold green]Done![/bold green] Report: {output_file}")
+        self._display_stats(state)
 
-    def _display_statistics(self, state: ResearchState):
-        """
-        Displays accurate runtime statistics in a formatted table.
-        """
-        table = Table(title="Research Runtime Statistics")
+    def _display_stats(self, state: ResearchState):
+        table = Table(title="Research Stats")
         table.add_column("Metric", style="cyan")
         table.add_column("Value", style="magenta")
-
+        table.add_row("Iterations", str(state.iterations))
         table.add_row("URLs Found", str(state.urls_found))
-        table.add_row("URLs Processed", str(state.urls_processed))
         table.add_row("Successful Downloads", str(state.successful_downloads))
         table.add_row("Successful Extractions", str(state.successful_extractions))
         table.add_row("Successful Summaries", str(state.successful_summaries))
         table.add_row("Failed Pages", str(len(state.failed_pages)))
-
-        # Basic confidence calculation
-        if state.urls_found > 0:
-            confidence = (state.successful_summaries / state.urls_found) * 1.0
-            state.confidence_score = round(min(confidence, 1.0), 2)
-        else:
-            state.confidence_score = 0.0
-
-        table.add_row("Final Confidence", str(state.confidence_score))
-
-        console.print("\n")
+        table.add_row("Final Confidence", f"{state.confidence_score:.2f}")
         console.print(table)
-
-        if state.failed_pages:
-             logger.info("Detailed Failure Reasons:")
-             for failure in state.failed_pages:
-                  logger.info(f"- {failure['url']}: {failure['reason']}")

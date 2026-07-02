@@ -1,60 +1,71 @@
-from typing import List
+from typing import List, Dict
 from web_research_agent.models.llm import LLMClient
-from web_research_agent.models.schemas import ArticleSummary, ResearchPlan
+from web_research_agent.models.schemas import ArticleSummary, ResearchPlan, Contradiction
 import logging
 
 logger = logging.getLogger(__name__)
 
-def generate_final_report(summaries: List[ArticleSummary], plan: ResearchPlan, llm_client: LLMClient) -> str:
+def generate_final_report(
+    summaries: List[ArticleSummary],
+    plan: ResearchPlan,
+    llm_client: LLMClient,
+    iterations: int = 1,
+    coverage: Dict[str, float] = None,
+    contradictions: List[Contradiction] = None
+) -> str:
     """
-    Combines summaries into a final Markdown report using LLM for synthesis.
-    Includes a fallback mechanism if LLM synthesis fails after retries.
+    Assembles the final report. Includes LLM synthesis with a robust non-LLM fallback.
     """
-    combined_summaries = ""
-    references = "\n## References\n\n"
+    coverage = coverage or {}
+    contradictions = contradictions or []
 
-    for i, item in enumerate(summaries, 1):
-        url = item.url
-        summary = item.summary
+    summary_text = "\n\n".join([f"### Source: {s.url}\n{s.summary}" for s in summaries])
+    references = "\n".join([f"- {s.url}" for s in summaries])
 
-        combined_summaries += f"### Source {i}\nSource: {url}\n\n{summary}\n\n---\n\n"
-        references += f"- {url}\n"
+    prompt = f"""
+    Write a research report for "{plan.topic}".
+    Objectives: {', '.join(plan.objectives)}
+    Iterations: {iterations}
+    Summaries: {summary_text[:8000]} # Limit to save tokens
+    """
+    sys_prompt = "Professional report. Markdown. Focus on synthesis."
 
     try:
-        final_report_content = llm_client.generate_report(
-            summaries=combined_summaries,
-            objectives=plan.objectives,
-            topic=plan.topic
-        )
-
-        # Ensure references are at the end if not already included by LLM
-        if "## References" not in final_report_content:
-            final_report_content += references
-
-        return final_report_content
-
+        report = llm_client.call(prompt, sys_prompt)
+        return report
     except Exception as e:
-        logger.error(f"Persistent failure in LLM report synthesis: {str(e)}. Generating fallback report.")
-        return generate_fallback_report(combined_summaries, plan, references)
+        logger.warning(f"LLM Report generation failed: {e}. Using no-LLM fallback.")
+        return generate_no_llm_fallback_report(plan, summaries, iterations, coverage, contradictions)
 
-def generate_fallback_report(summaries_text: str, plan: ResearchPlan, references_text: str) -> str:
-    """
-    Generates a basic Markdown report if LLM synthesis fails.
-    """
-    report = f"""# Research Report: {plan.topic} (Fallback)
+def generate_no_llm_fallback_report(
+    plan: ResearchPlan,
+    summaries: List[ArticleSummary],
+    iterations: int,
+    coverage: Dict[str, float],
+    contradictions: List[Contradiction]
+) -> str:
+    """Generates report.md without LLM."""
+    sections = [
+        f"# Research Report: {plan.topic}",
+        "## Research Objectives",
+        "\n".join([f"- {obj} ({coverage.get(obj, 0)}% coverage)" for obj in plan.objectives]),
+        "## Methodology",
+        f"Research performed over {iterations} iterations using automated web search and extraction.",
+        "## Article Summaries"
+    ]
 
-## Executive Summary
-This report was generated using a fallback mechanism because the automated synthesis failed. It contains the raw summaries of the researched sources.
+    for s in summaries:
+        sections.append(f"### {s.url}\n{s.summary}")
 
-## Research Objectives
-{"".join([f"- {obj}\n" for obj in plan.objectives])}
+    if contradictions:
+        sections.append("## Contradictions Detected")
+        for c in contradictions:
+            sections.append(f"- **Conflict**: {c.claim_a} VS {c.claim_b}\n  **Sources**: {c.source_a} AND {c.source_b}")
 
-## Source Summaries
-{summaries_text}
+    sections.append("## References")
+    sections.append("\n".join([f"- {s.url}" for s in summaries]))
 
-## Conclusion
-Research concluded with {len(plan.objectives)} objectives. Please review the source summaries above for details.
+    sections.append("## Limitations")
+    sections.append("This is a fallback report generated without LLM synthesis due to API unavailability.")
 
-{references_text}
-"""
-    return report
+    return "\n\n".join(sections)
