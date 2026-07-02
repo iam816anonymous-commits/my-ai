@@ -44,36 +44,56 @@ class LLMClient:
             logger.error(f"LLM Summarization failed: {e}")
             return "Summarization failed."
 
-    def generate_report(self, summaries: str) -> str:
+    def generate_report(self, summaries: str, objectives: list, topic: str) -> str:
         """
-        Generates a final report from multiple article summaries.
+        Generates a final report from multiple article summaries and research objectives.
         """
+        objectives_str = "\n".join([f"- {obj}" for obj in objectives])
         prompt = f"""
-        Generate a comprehensive research report based on the following article summaries.
+        Generate a comprehensive research report for the topic "{topic}" based on the following article summaries.
+        The research objectives were:
+        {objectives_str}
 
         The report must follow this exact structure:
-        # Research Report
+        # Research Report: {topic}
 
         ## Executive Summary
         (A high-level overview of the research findings)
 
+        ## Research Objectives
+        (List the objectives addressed in this research)
+
+        ## Methodology
+        (Describe the research process: multiple web searches, content extraction, and LLM-based summarization and synthesis)
+
         ## Source Summaries
-        (Incorporate the provided summaries here, organized logically)
+        (Incorporate the provided summaries here, organized logically by subtopic if possible)
 
         ## Final Conclusion
         (Synthesize all information into a final conclusion)
 
+        ## Coverage Summary
+        (Discuss how well the research objectives were met based on the available sources)
+
+        ## Confidence Score
+        (Provide a confidence score from 0.0 to 1.0 based on the quality and diversity of sources)
+
+        ## Known Gaps
+        (Identify areas that were not fully covered or require further research)
+
         Summaries:
         {summaries}
+
+        Ensure the response is a well-formatted Markdown document.
         """
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a helpful research assistant."},
+                    {"role": "system", "content": "You are a professional research report writer."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.5
+                temperature=0.4
             )
             return response.choices[0].message.content
         except Exception as e:
