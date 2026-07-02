@@ -1,10 +1,12 @@
 import logging
 import requests
+import io
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict
 from web_research_agent.config import REQUEST_TIMEOUT, MAX_RETRIES
+import pypdf
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +32,23 @@ def get_session():
         _session.mount("https://", adapter)
     return _session
 
+def extract_text_from_pdf(content: bytes) -> str:
+    """Extracts plain text from PDF bytes."""
+    try:
+        pdf_file = io.BytesIO(content)
+        reader = pypdf.PdfReader(pdf_file)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() + "\n"
+        return text
+    except Exception as e:
+        logger.error(f"PDF extraction failed: {e}")
+        return ""
+
 def fetch_html(url: str, timeout: int = REQUEST_TIMEOUT) -> str:
     """
     Downloads webpage content using connection pooling and retries.
+    Handles PDF extraction for ArXiv.
     """
     session = get_session()
     headers = {
@@ -40,17 +56,8 @@ def fetch_html(url: str, timeout: int = REQUEST_TIMEOUT) -> str:
     }
 
     try:
-        response = session.get(url, headers=headers, timeout=timeout)
-        response.raise_for_status()
-
         # Check for ArXiv HTML conversion preference if it's a PDF
         if url.endswith(".pdf") and "arxiv.org/pdf/" in url:
-            html_url = url.replace("arxiv.org/pdf/", "arxiv.org/abs/").rstrip(".pdf")
-            logger.info(f"Detected ArXiv PDF, attempting to get HTML version from {html_url}")
-            # This is a bit recursive/circular but works for this specific case
-            # In a real app we'd handle ArXiv HTML conversion via their experimental /html/ endpoint
-            # but for now let's just use the landing page if the PDF is the direct link
-            # Actually, ArXiv now supports HTML directly: https://arxiv.org/html/...
             alt_url = url.replace("/pdf/", "/html/").replace(".pdf", "")
             try:
                 alt_resp = session.get(alt_url, headers=headers, timeout=timeout)
@@ -58,6 +65,15 @@ def fetch_html(url: str, timeout: int = REQUEST_TIMEOUT) -> str:
                     return alt_resp.text
             except:
                 pass
+
+        response = session.get(url, headers=headers, timeout=timeout)
+        response.raise_for_status()
+
+        # Handle PDF content
+        content_type = response.headers.get('Content-Type', '').lower()
+        if 'application/pdf' in content_type or url.endswith('.pdf'):
+            logger.info(f"Extracting text from PDF: {url}")
+            return extract_text_from_pdf(response.content)
 
         return response.text
     except Exception as e:

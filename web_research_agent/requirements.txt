@@ -8,3 +8,5 @@ typer
 python-dotenv
 openai
 tenacity
+psutil
+pypdf

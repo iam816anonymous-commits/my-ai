@@ -20,12 +20,10 @@ def calculate_confidence(state_data: Dict) -> float:
     # 2. Source Quality & Density (20%)
     summaries = state_data.get("summaries", [])
     source_count = len(summaries)
-    # Penalize low source count, max bonus at 8+ sources
     source_score = min(source_count / 8.0, 1.0) * 100
 
     # 3. Evidence Agreement & Contradictions (20%)
     contradictions = state_data.get("contradictions", [])
-    # 5% penalty per unique contradiction
     agreement_score = max(0, 100 - (len(contradictions) * 5))
 
     # Final Weighted Score
@@ -57,7 +55,8 @@ def evaluate_research(
     1. Update coverage (0-100%) for each objective.
     2. Identify core claims for the Evidence Graph.
     3. Identify contradictions.
-    4. Generate follow-up queries if coverage is below 90% and iterations < 3.
+    4. Highlight claims with weak evidence.
+    5. Generate follow-up queries if coverage is below 90% and iterations < 3.
 
     RETURN JSON:
     {{
@@ -66,27 +65,25 @@ def evaluate_research(
         "contradictions": [{{ "claim_a": "", "claim_b": "", "source_a": "", "source_b": "", "explanation": "" }}],
         "confidence": 0-100,
         "objective_coverage": {{ "exact_objective_text": 0-100 }},
-        "evidence_items": [{{ "claim": "", "supporting_sources": [url], "confidence": 0-100, "evidence_strength": "Strong/Medium/Weak", "agreement_score": 0-100 }}],
+        "evidence_items": [{{ "claim": "", "supporting_sources": [url], "confidence": 0-100, "evidence_strength": "Strong/Moderate/Weak", "agreement_score": 0-100 }}],
         "follow_up_queries": [],
         "continue_research": bool
     }}
     """
-    sys_prompt = "You are a professional evidence analyst. Provide rigorous, JSON-only evaluations."
+    sys_prompt = "You are a professional evidence analyst. Provide rigorous evaluations. Weak evidence must be identified."
 
     try:
         data = llm_client.get_json(prompt, sys_prompt)
 
         # Validation and normalization
         coverage = data.get("objective_coverage", {})
-        # Ensure coverage is 0-100 (handle decimal errors from LLM)
         for obj in plan.objectives:
             val = coverage.get(obj, 0.0)
-            if val < 1.0 and val > 0: # Likely decimal
+            if val < 1.0 and val > 0:
                 val = val * 100
             coverage[obj] = min(max(val, 0.0), 100.0)
         data["objective_coverage"] = coverage
 
-        # Decision logic
         if any(v < 90 for v in coverage.values()) and current_iteration < 3:
             data["continue_research"] = True
         else:

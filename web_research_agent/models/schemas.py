@@ -24,6 +24,7 @@ class ArticleSummary(BaseModel):
     url: str
     summary: str
     quality_score: float = 0.0
+    source_type: str = "Unknown"
 
 class Contradiction(BaseModel):
     claim_a: str
@@ -70,6 +71,17 @@ class SelfEvaluation(BaseModel):
     overall_grade: str # A, B, C, etc.
     justification: str
 
+class ProfilingStats(BaseModel):
+    slowest_functions: Dict[str, float] = Field(default_factory=dict)
+    prompt_sizes: List[int] = Field(default_factory=list)
+    response_sizes: List[int] = Field(default_factory=list)
+    download_times: List[float] = Field(default_factory=list)
+    extraction_times: List[float] = Field(default_factory=list)
+
+class SourceQualityStats(BaseModel):
+    type_counts: Dict[str, int] = Field(default_factory=dict)
+    average_score: float = 0.0
+
 class ResearchState(BaseModel):
     query: str
     plan: Optional[ResearchPlan] = None
@@ -92,6 +104,8 @@ class ResearchState(BaseModel):
     report_status: str = "not_started"
     confidence_score: float = 0.0
     start_time: datetime = Field(default_factory=datetime.now)
+    profiling: ProfilingStats = Field(default_factory=ProfilingStats)
+    source_stats: SourceQualityStats = Field(default_factory=SourceQualityStats)
 
 class ResearchReport(BaseModel):
     title: str
@@ -105,3 +119,21 @@ class ResearchReport(BaseModel):
     confidence_assessment: str
     references: List[str]
     self_evaluation: Optional[SelfEvaluation] = None
+
+class BenchmarkMetrics(BaseModel):
+    query: str
+    category: str
+    runtime: float
+    pages_searched: int
+    successful_downloads: int
+    extraction_success: int
+    summary_success: int
+    evidence_count: int
+    citation_count: int
+    coverage: float
+    confidence: float
+    overall_quality_score: float
+    grade: str
+    memory_peak_mb: float
+    source_quality_avg: float
+    timestamp: datetime = Field(default_factory=datetime.now)
