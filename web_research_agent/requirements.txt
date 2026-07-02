@@ -1,0 +1,9 @@
+requests
+beautifulsoup4
+trafilatura
+duckduckgo-search
+pydantic
+rich
+typer
+python-dotenv
+openai
