@@ -1,5 +1,6 @@
 import typer
 from web_research_agent.agents.researcher import ResearchAgent
+from web_research_agent.config import validate_config
 from typing import Optional
 
 app = typer.Typer()
@@ -9,6 +10,7 @@ def research(query: str):
     """
     Research a topic and generate a Markdown report.
     """
+    validate_config()
     agent = ResearchAgent()
     agent.run(query)
 
@@ -19,6 +21,7 @@ def main(ctx: typer.Context, query: Optional[str] = typer.Argument(None)):
     """
     if ctx.invoked_subcommand is None:
         if query:
+            validate_config()
             agent = ResearchAgent()
             agent.run(query)
         else:

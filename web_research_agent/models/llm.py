@@ -4,7 +4,7 @@ import time
 import re
 from typing import Any, Dict, Optional, Union
 from openai import OpenAI
-from web_research_agent.config import API_KEY, BASE_URL, MODEL_NAME
+from web_research_agent.config import API_KEY, BASE_URL, MODEL_NAME, MAX_RETRIES, HTTP_REFERER, X_TITLE
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -25,9 +25,16 @@ class LLMRateLimitError(LLMError):
 
 class LLMClient:
     def __init__(self):
+        headers = {}
+        if HTTP_REFERER:
+            headers["HTTP-Referer"] = HTTP_REFERER
+        if X_TITLE:
+            headers["X-Title"] = X_TITLE
+
         self.client = OpenAI(
             api_key=API_KEY,
-            base_url=BASE_URL
+            base_url=BASE_URL,
+            default_headers=headers
         )
         self.model = MODEL_NAME
 
@@ -59,7 +66,7 @@ class LLMClient:
             raise LLMError("Failed to parse LLM response as JSON.")
 
     @retry(
-        stop=stop_after_attempt(3),
+        stop=stop_after_attempt(MAX_RETRIES),
         wait=wait_exponential(multiplier=2, min=2, max=8),
         retry=retry_if_exception_type((LLMRateLimitError, Exception)),
         before_sleep=before_sleep_log(logger, logging.WARNING)

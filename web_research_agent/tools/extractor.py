@@ -2,6 +2,7 @@ import logging
 import trafilatura
 from bs4 import BeautifulSoup
 import re
+from web_research_agent.config import MAX_ARTICLE_CHARS
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ def extract_text(html: str) -> str:
         clean_text = deduplicate_text(extracted)
 
         # Token optimization
-        return clean_text[:4000]
+        return clean_text[:MAX_ARTICLE_CHARS]
 
     except Exception as e:
         logger.error(f"Extraction failed: {e}")

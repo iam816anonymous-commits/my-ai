@@ -2,10 +2,11 @@ import logging
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from web_research_agent.config import REQUEST_TIMEOUT, MAX_RETRIES
 
 logger = logging.getLogger(__name__)
 
-def fetch_html(url: str, timeout: int = 15, retries: int = 3) -> str:
+def fetch_html(url: str, timeout: int = REQUEST_TIMEOUT, retries: int = MAX_RETRIES) -> str:
     """
     Downloads webpage HTML with retries and timeout.
     """

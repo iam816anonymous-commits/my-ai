@@ -3,6 +3,7 @@ from typing import List, Dict
 from ddgs import DDGS
 from urllib.parse import urlparse
 from tenacity import retry, stop_after_attempt, wait_exponential
+from web_research_agent.config import MAX_SEARCH_RESULTS
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +39,9 @@ def score_url(url: str) -> int:
     return score
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=8))
-def search_web(queries: List[str], max_results_total: int = 5) -> List[str]:
+def search_web(queries: List[str], max_results_total: int = MAX_SEARCH_RESULTS) -> List[str]:
     """
-    Searches using multiple queries. Optimized for 5 high-quality pages.
+    Searches using multiple queries. Optimized for high-quality pages.
     """
     all_urls = set()
     scored_urls = []

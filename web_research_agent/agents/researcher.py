@@ -3,7 +3,7 @@ import time
 from rich.console import Console
 from rich.table import Table
 from datetime import datetime
-from web_research_agent.config import LOGS_DIR, OUTPUT_DIR
+from web_research_agent.config import LOGS_DIR, OUTPUT_DIR, MAX_ITERATIONS, MAX_SEARCH_RESULTS
 from web_research_agent.tools.search import search_web
 from web_research_agent.tools.browser import fetch_html
 from web_research_agent.tools.extractor import extract_text
@@ -38,10 +38,9 @@ class ResearchAgent:
         console.print(f"Research Objectives defined: {len(state.plan.objectives)}")
 
         # 2. Iterative Research Loop
-        max_iterations = 3
-        while state.iterations < max_iterations:
+        while state.iterations < MAX_ITERATIONS:
             state.iterations += 1
-            console.print(f"\n[bold green]Research Cycle {state.iterations}/{max_iterations}[/bold green]")
+            console.print(f"\n[bold green]Research Cycle {state.iterations}/{MAX_ITERATIONS}[/bold green]")
 
             current_queries = state.plan.queries if state.iterations == 1 else state.follow_up_queries
             if not current_queries:
@@ -49,7 +48,7 @@ class ResearchAgent:
 
             # Search
             console.print(f"Executing web searches...")
-            urls = search_web(current_queries, max_results_total=5)
+            urls = search_web(current_queries, max_results_total=MAX_SEARCH_RESULTS)
             new_urls = [u for u in urls if u not in state.sources_collected]
             state.urls_found += len(urls)
             state.urls_filtered += (len(urls) - len(new_urls))
