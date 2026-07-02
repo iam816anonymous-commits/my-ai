@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, HttpUrl
 from typing import List, Optional, Dict, Any
+from datetime import datetime
 
 class ResearchPlan(BaseModel):
     topic: str
@@ -38,10 +39,12 @@ class ResearchState(BaseModel):
     plan: Optional[ResearchPlan] = None
     iterations: int = 0
     urls_found: int = 0
+    urls_filtered: int = 0
     urls_processed: int = 0
     successful_downloads: int = 0
     successful_extractions: int = 0
     successful_summaries: int = 0
+    fallback_summaries_used: int = 0
     failed_pages: List[Dict[str, str]] = Field(default_factory=list)
     sources_collected: List[str] = Field(default_factory=list)
     knowledge_base: List[KnowledgeBaseEntry] = Field(default_factory=list)
@@ -51,6 +54,7 @@ class ResearchState(BaseModel):
     follow_up_queries: List[str] = Field(default_factory=list)
     report_status: str = "not_started"
     confidence_score: float = 0.0
+    start_time: datetime = Field(default_factory=datetime.now)
 
 class ResearchReport(BaseModel):
     title: str

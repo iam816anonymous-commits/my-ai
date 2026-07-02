@@ -77,8 +77,17 @@ class LLMClient:
                 ],
                 "temperature": 0.2
             }
+            # Only use json_object if explicitly requested AND not using a model that might not support it
+            # For Nemotron-3 on OpenRouter, it's safer to avoid it if it causes issues.
+            # But the user asked for OpenRouter optimization.
             if response_format == "json":
-                kwargs["response_format"] = {"type": "json_object"}
+                 # Some models on OpenRouter fail with response_format
+                 # We'll omit it and rely on robust parsing unless we are sure.
+                 # For "production-grade", let's try it but handle the 400.
+                 try:
+                    kwargs["response_format"] = {"type": "json_object"}
+                 except:
+                    pass
 
             response = self.client.chat.completions.create(**kwargs)
             content = response.choices[0].message.content or ""
@@ -93,7 +102,13 @@ class LLMClient:
 
         except Exception as e:
             err_msg = str(e)
-            # Detect 429, 503, etc.
+            if "400" in err_msg and "response_format" in err_msg:
+                 logger.warning("Model does not support response_format. Retrying without it.")
+                 # Re-run without response_format immediately
+                 kwargs.pop("response_format", None)
+                 response = self.client.chat.completions.create(**kwargs)
+                 return response.choices[0].message.content or ""
+
             if any(x in err_msg for x in ["429", "rate limit", "503", "overloaded", "timeout"]):
                 logger.warning(f"Retryable LLM error: {err_msg}")
                 raise LLMRateLimitError(err_msg)
@@ -103,10 +118,10 @@ class LLMClient:
 
     def get_json(self, prompt: str, system_prompt: str = "Return JSON.") -> Dict[str, Any]:
         """Get JSON with robust parsing and retries."""
+        content = self.call(prompt, system_prompt, response_format="json")
         try:
-            content = self.call(prompt, system_prompt, response_format="json")
             return self._parse_json_robustly(content)
         except Exception as e:
-             logger.warning(f"JSON attempt failed, retrying without json_format: {e}")
-             content = self.call(prompt, system_prompt)
+             logger.warning(f"JSON parsing failed, trying one more time with explicit instructions: {e}")
+             content = self.call(prompt + " Output valid JSON.", system_prompt)
              return self._parse_json_robustly(content)

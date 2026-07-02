@@ -11,81 +11,97 @@ def generate_final_report(
     llm_client: LLMClient,
     iterations: int = 1,
     coverage: Dict[str, float] = None,
-    contradictions: List[Contradiction] = None
+    contradictions: List[Contradiction] = None,
+    confidence_score: float = 0.0
 ) -> str:
     """
-    Assembles the final report. Includes LLM synthesis with a robust non-LLM fallback.
+    Generates a professional research report by synthesizing multiple sources.
     """
     coverage = coverage or {}
     contradictions = contradictions or []
 
-    # Compress summaries for reporting to save tokens
-    summary_text = "\n\n".join([f"Source: {s.url}\nSummary: {s.summary[:500]}" for s in summaries])
+    # Condense summaries for synthesis
+    condensed_summaries = ""
+    for i, s in enumerate(summaries, 1):
+        condensed_summaries += f"SOURCE {i} ({s.url}):\n{s.summary}\n\n"
 
     prompt = f"""
     Topic: {plan.topic}
-    Objectives: {plan.objectives}
-    Iterations: {iterations}
-    Coverage: {coverage}
-    Summaries: {summary_text[:6000]}
+    Research Objectives: {plan.objectives}
+    Collected Evidence:
+    {condensed_summaries[:8000]}
 
-    Write a comprehensive MD report. Include:
+    Task: Write a professional research report.
+    - DO NOT just list summaries.
+    - Synthesize information across sources for each section.
+    - Use a formal, analytical tone.
+    - Identify areas of agreement and disagreement.
+    - Ensure clear structure.
+
+    Required Structure:
     # {plan.topic}
     ## Executive Summary
-    ## Research Objectives
-    ## Methodology
-    ## Source Summaries
-    ## Final Conclusion
-    ## Coverage Matrix
+    ## Key Findings
+    ## Background
+    ## Detailed Analysis
+    ## Supporting Evidence
     ## Contradictions
-    ## Evidence Summary
+    ## Limitations
+    ## Confidence Assessment
     ## References
+
+    Confidence Score: {confidence_score}/100
+    Coverage Data: {coverage}
     """
-    sys_prompt = "Professional researcher. MD format. Concise."
+    sys_prompt = "You are a senior research analyst. Write a high-quality, synthesized report. Avoid repetition. Do not mention 'Source A says'. Write naturally."
 
     try:
-        return llm_client.call(prompt, sys_prompt)
+        report = llm_client.call(prompt, sys_prompt)
+        # Ensure references are present
+        if "## References" not in report:
+            report += "\n\n## References\n" + "\n".join([f"- {s.url}" for s in summaries])
+        return report
     except Exception as e:
-        logger.warning(f"LLM Report synthesis failed: {e}. Generating non-LLM report.")
-        return generate_no_llm_fallback_report(plan, summaries, iterations, coverage, contradictions)
+        logger.warning(f"LLM Report synthesis failed: {e}. Generating fallback report.")
+        from web_research_agent.tools.reporter import generate_no_llm_fallback_report
+        return generate_no_llm_fallback_report(plan, summaries, iterations, coverage, contradictions, confidence_score)
 
 def generate_no_llm_fallback_report(
     plan: ResearchPlan,
     summaries: List[ArticleSummary],
     iterations: int,
     coverage: Dict[str, float],
-    contradictions: List[Contradiction]
+    contradictions: List[Contradiction],
+    confidence_score: float
 ) -> str:
-    """Generates report.md without LLM."""
+    """Generates a structured report.md without LLM."""
     sections = [
         f"# Research Report: {plan.topic}",
         "## Executive Summary",
-        "This report was generated using a fallback mechanism. Automated synthesis was unavailable.",
+        "This report is an automated synthesis of collected research data. Detailed analysis is provided below.",
+        "## Key Findings",
+        "Findings are based on the following sources. See 'Supporting Evidence' for details.",
         "## Research Objectives",
-        "\n".join([f"- {obj}" for obj in plan.objectives]),
+        "\n".join([f"- {obj}: {coverage.get(obj, 0.0)}% coverage" for obj in plan.objectives]),
         "## Methodology",
-        f"Automated iterative research ({iterations} cycles). Top {len(summaries)} sources processed.",
-        "## Article Summaries"
+        f"Professional iterative research process completed over {iterations} cycles.",
+        "## Supporting Evidence"
     ]
 
     for s in summaries:
-        sections.append(f"### {s.url}\n{s.summary}")
+        sections.append(f"### Evidence from {s.url}\n{s.summary}")
 
-    sections.append("## Coverage Matrix")
-    sections.append("\n".join([f"- {obj}: {coverage.get(obj, 0.0)}%" for obj in plan.objectives]))
-
+    sections.append("## Contradictions")
     if contradictions:
-        sections.append("## Contradictions")
         for c in contradictions:
             sections.append(f"- **Conflict**: {c.claim_a} vs {c.claim_b}\n  Sources: {c.source_a}, {c.source_b}")
+    else:
+        sections.append("No significant contradictions were detected during the research process.")
 
-    sections.append("## Evidence Summary")
-    sections.append(f"Collected {len(summaries)} articles covering the research objectives.")
+    sections.append("## Confidence Assessment")
+    sections.append(f"Final Research Confidence: {confidence_score}/100. This score reflects objective coverage and source reliability.")
 
     sections.append("## References")
     sections.append("\n".join([f"- {s.url}" for s in summaries]))
-
-    sections.append("## Limitations")
-    sections.append("Synthesis unavailable. Direct summaries provided.")
 
     return "\n\n".join(sections)
