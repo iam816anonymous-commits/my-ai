@@ -1,10 +1,12 @@
 import logging
+import json
 from typing import List, Dict, Optional
 from web_research_agent.models.llm import LLMClient
 from web_research_agent.models.schemas import (
     ArticleSummary, ResearchPlan, Contradiction,
-    EvidenceItem, SelfEvaluation, ResearchReport
+    EvidenceItem, ResearchReport, ConfidenceBreakdown, ResearchGap
 )
+from web_research_agent.config import OUTPUT_DIR, EXPORT_FORMATS
 
 logger = logging.getLogger(__name__)
 
@@ -14,78 +16,90 @@ def generate_final_report(
     llm_client: LLMClient,
     evidence_items: List[EvidenceItem],
     contradictions: List[Contradiction],
-    confidence_score: float
+    confidence: ConfidenceBreakdown,
+    gaps: List[ResearchGap]
 ) -> str:
     """
-    Synthesis engine that produces a Gartner/McKinsey style analytical report.
+    Enhanced synthesis engine with academic citations and dashboard.
     """
-    evidence_text = "\n".join([f"- {s.url}: {s.summary}" for s in summaries])
+    evidence_text = "\n".join([f"SOURCE [{i+1}]: {s.url}\nCONTENT: {s.summary}" for i, s in enumerate(summaries)])
 
     prompt = f"""
     TOPIC: {plan.topic}
-    INTENT: {plan.intent}
     OBJECTIVES: {plan.objectives}
-    RAW EVIDENCE:
+    SOURCES & EVIDENCE:
     {evidence_text[:12000]}
 
-    TASK: Synthesize a professional research report.
-    - Style: Analytical, formal, concise (McKinsey/Gartner style).
-    - Synthesis: Cross-reference sources. DO NOT just list summaries.
-    - Connections: Contrast different viewpoints and highlight agreements.
+    TASK: Write an analyst-grade research report.
+    - Style: Formal, concise, data-driven.
+    - Citations: Use inline numbers like [1], [2, 3] to attribute every major fact to the source index.
 
     REPORT STRUCTURE:
-    # Executive Summary (Bottom-line findings)
-    # Key Findings (Bullet points of core facts)
-    # Background (Context and history)
-    # Detailed Analysis (Synthesis of technical/thematic details)
-    # Supporting Evidence (Structured claims and sources)
-    # Contradictions (Conflicts and explanations)
-    # Limitations (Gaps in research)
-    # Confidence Assessment (Why the score is {confidence_score}/100)
-    # References
+    # {plan.topic}
 
-    Confidence Score: {confidence_score}/100
+    ## Executive Dashboard
+    (Top-line conclusions and a Research Scorecard)
+
+    ## Key Takeaways
+    (3-5 critical insights)
+
+    ## Background
+
+    ## Detailed Analysis
+    (Synthesized analysis using inline citations [1], [2], etc.)
+
+    ## Supporting Evidence
+    (Structured claims and attributed sources)
+
+    ## Contradictions & Conflicts
+
+    ## Research Gaps
+    (What remains unknown)
+
+    ## Confidence Breakdown
+    (Detailed explanation of the {confidence.overall}/100 score)
+
+    ## References
+    (Mapped to the numbers used in citations)
+
+    ## Further Reading
     """
-    sys_prompt = "You are a senior research analyst. Output a high-fidelity, evidence-driven Markdown report."
+    sys_prompt = "Senior Analyst Synthesis Engine. Use academic citation format [n]. High professional quality only."
 
     try:
-        return llm_client.call(prompt, sys_prompt)
+        report_content = llm_client.call(prompt, sys_prompt)
+        return report_content
     except Exception as e:
         logger.error(f"Report synthesis failed: {e}")
-        return "# Report Generation Failed\n\nPlease check logs for details."
+        return "# Synthesis Failed\nRaw summaries provided below.\n" + evidence_text
 
-def run_self_evaluation(report_content: str, plan: ResearchPlan, llm_client: LLMClient) -> SelfEvaluation:
-    """
-    Automatically evaluates the quality of the generated report.
-    """
-    prompt = f"""
-    Analyze the following research report for quality and objectivity.
-    TOPIC: {plan.topic}
-    REPORT:
-    {report_content[:8000]}
+def export_report(content: str, plan: ResearchPlan, state_data: Dict):
+    """Handles multi-format exports."""
+    base_name = "report"
 
-    Return JSON evaluation:
-    {{
-        "coverage_score": 0-100,
-        "evidence_score": 0-100,
-        "readability_score": 0-100,
-        "citation_quality": 0-100,
-        "objectivity": 0-100,
-        "bias_risk": 0-100,
-        "novel_insights": 0-100,
-        "overall_grade": "A/B/C/D/F",
-        "justification": "Short reason for grade"
-    }}
-    """
-    sys_prompt = "You are an AI Quality Auditor. Be strict and objective."
+    if "markdown" in EXPORT_FORMATS:
+        with open(OUTPUT_DIR / f"{base_name}.md", "w", encoding="utf-8") as f:
+            f.write(content)
 
-    try:
-        data = llm_client.get_json(prompt, sys_prompt)
-        return SelfEvaluation(**data)
-    except Exception as e:
-        logger.error(f"Self-evaluation failed: {e}")
-        return SelfEvaluation(
-            coverage_score=0, evidence_score=0, readability_score=0,
-            citation_quality=0, objectivity=0, bias_risk=0, novel_insights=0,
-            overall_grade="U", justification="Evaluation engine failed."
-        )
+    if "json" in EXPORT_FORMATS:
+        with open(OUTPUT_DIR / f"{base_name}.json", "w", encoding="utf-8") as f:
+            json.dump(state_data, f, indent=2)
+
+    if "html" in EXPORT_FORMATS:
+        html_wrapper = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: sans-serif; line-height: 1.6; max-width: 800px; margin: 40px auto; padding: 20px; }}
+                h1, h2 {{ border-bottom: 1px solid #eee; }}
+                pre {{ background: #f4f4f4; padding: 15px; overflow: auto; }}
+            </style>
+        </head>
+        <body>
+            {content.replace('# ', '<h1>').replace('## ', '<h2>').replace('### ', '<h3>').replace('\n', '<br>')}
+        </body>
+        </html>
+        """
+        # Note: Very crude MD to HTML conversion for demo purposes. In prod, use 'markdown' library.
+        with open(OUTPUT_DIR / f"{base_name}.html", "w", encoding="utf-8") as f:
+            f.write(html_wrapper)

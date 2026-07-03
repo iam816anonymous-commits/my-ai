@@ -2,34 +2,51 @@ import logging
 import re
 from typing import List, Dict, Any
 from web_research_agent.models.llm import LLMClient
-from web_research_agent.models.schemas import ReasoningResult, ArticleSummary, ResearchPlan, KnowledgeBaseEntry, EvidenceItem, EvidenceGraph
+from web_research_agent.models.schemas import (
+    ReasoningResult, ArticleSummary, ResearchPlan,
+    EvidenceItem, ConfidenceBreakdown, ResearchGap
+)
 
 logger = logging.getLogger(__name__)
 
-def calculate_confidence(state_data: Dict) -> float:
+def calculate_explainable_confidence(state_data: Dict) -> ConfidenceBreakdown:
     """
-    Calculates a realistic confidence score (0-100) based on multiple factors.
+    Calculates detailed confidence breakdown.
     """
     coverage_dict = state_data.get("objective_coverage", {})
-    if not coverage_dict:
-        return 0.0
+    avg_coverage = sum(coverage_dict.values()) / len(coverage_dict) if coverage_dict else 0
 
-    # 1. Average Coverage (60%)
-    avg_coverage = sum(coverage_dict.values()) / len(coverage_dict)
-
-    # 2. Source Quality & Density (20%)
     summaries = state_data.get("summaries", [])
-    source_count = len(summaries)
-    source_score = min(source_count / 8.0, 1.0) * 100
+    source_diversity = min(len(set(re.search(r'://([^/]+)', s.get("url", "")).group(1) for s in summaries if "://" in s.get("url", ""))) / 6.0, 1.0) * 100 if summaries else 0
 
-    # 3. Evidence Agreement & Contradictions (20%)
+    # Weights for evidence strength (simulation for now based on quality scores)
+    avg_source_quality = sum(s.get("quality_score", 50) for s in summaries) / len(summaries) if summaries else 0
+
     contradictions = state_data.get("contradictions", [])
-    agreement_score = max(0, 100 - (len(contradictions) * 5))
+    contradiction_penalty = len(contradictions) * 5
 
-    # Final Weighted Score
-    final_score = (avg_coverage * 0.6) + (source_score * 0.2) + (agreement_score * 0.2)
+    missing_penalty = (100 - avg_coverage) * 0.5
 
-    return round(max(0, min(final_score, 100)), 2)
+    # Final components
+    comp_coverage = avg_coverage
+    comp_strength = avg_source_quality
+    comp_diversity = source_diversity
+    comp_agreement = max(0, 100 - contradiction_penalty)
+    comp_extraction = 95.0 # Constant for now
+
+    overall = (comp_coverage * 0.4) + (comp_strength * 0.2) + (comp_diversity * 0.2) + (comp_agreement * 0.2)
+    overall = max(0, min(overall, 100))
+
+    return ConfidenceBreakdown(
+        overall=round(overall, 2),
+        coverage=round(comp_coverage, 2),
+        evidence_strength=round(comp_strength, 2),
+        source_diversity=round(comp_diversity, 2),
+        agreement=round(comp_agreement, 2),
+        extraction_quality=comp_extraction,
+        missing_evidence_penalty=round(missing_penalty, 2),
+        contradiction_penalty=float(contradiction_penalty)
+    )
 
 def evaluate_research(
     query: str,
@@ -39,79 +56,53 @@ def evaluate_research(
     current_iteration: int
 ) -> ReasoningResult:
     """
-    Analytical evaluation of evidence and coverage.
-    Ensures coverage is treated as 0-100.
+    Reasoning with gap detection and evidence mapping.
     """
-    evidence_snapshot = "\n".join([f"SOURCE: {s.url}\nCONTENT: {s.summary[:400]}..." for s in summaries])
+    evidence_snapshot = "\n".join([f"SOURCE: {s.url}\nSUMMARY: {s.summary[:400]}" for s in summaries])
 
     prompt = f"""
     TOPIC: {plan.topic}
     INTENT: {plan.intent}
     OBJECTIVES: {plan.objectives}
-    EVIDENCE COLLECTED:
+    EVIDENCE:
     {evidence_snapshot[:8000]}
 
-    TASK: Analyze the evidence against research objectives.
-    1. Update coverage (0-100%) for each objective.
-    2. Identify core claims for the Evidence Graph.
-    3. Identify contradictions.
-    4. Highlight claims with weak evidence.
-    5. Generate follow-up queries if coverage is below 90% and iterations < 3.
+    TASK: Critically evaluate the state of research.
+    1. Update coverage (0-100) per objective.
+    2. Map key evidence items with source references.
+    3. Detect research gaps and suggest specific follow-ups.
 
     RETURN JSON:
     {{
         "completed_objectives": [],
         "missing_objectives": [],
         "contradictions": [{{ "claim_a": "", "claim_b": "", "source_a": "", "source_b": "", "explanation": "" }}],
-        "confidence": 0-100,
-        "objective_coverage": {{ "exact_objective_text": 0-100 }},
-        "evidence_items": [{{ "claim": "", "supporting_sources": [url], "confidence": 0-100, "evidence_strength": "Strong/Moderate/Weak", "agreement_score": 0-100 }}],
+        "objective_coverage": {{ "objective_text": 0-100 }},
+        "evidence_items": [{{ "claim": "", "supporting_sources": [url], "confidence": 0-100, "evidence_strength": "Strong/Medium/Weak", "agreement_score": 0-100 }}],
+        "gaps": [{{ "topic": "", "suggested_queries": [], "recommended_sources": [] }}],
         "follow_up_queries": [],
         "continue_research": bool
     }}
     """
-    sys_prompt = "You are a professional evidence analyst. Provide rigorous evaluations. Weak evidence must be identified."
+    sys_prompt = "Analytical reasoning engine. JSON output only. Be extremely thorough."
 
     try:
         data = llm_client.get_json(prompt, sys_prompt)
 
-        # Validation and normalization
+        # Coverage normalization
         coverage = data.get("objective_coverage", {})
         for obj in plan.objectives:
-            val = coverage.get(obj, 0.0)
-            if val < 1.0 and val > 0:
-                val = val * 100
-            coverage[obj] = min(max(val, 0.0), 100.0)
+            if obj not in coverage: coverage[obj] = 0.0
         data["objective_coverage"] = coverage
 
-        if any(v < 90 for v in coverage.values()) and current_iteration < 3:
-            data["continue_research"] = True
-        else:
-            data["continue_research"] = False
+        # Confidence breakdown logic is handled in the agent to include all state info
 
         return ReasoningResult(**data)
     except Exception as e:
-        logger.error(f"Reasoning evaluation failed: {e}")
+        logger.error(f"Reasoning iteration failed: {e}")
         return ReasoningResult(
             completed_objectives=[],
             missing_objectives=plan.objectives,
-            confidence=0,
             objective_coverage={obj: 0.0 for obj in plan.objectives},
             continue_research=False
         )
-
-def update_knowledge_base(
-    kb: List[KnowledgeBaseEntry],
-    new_summaries: List[ArticleSummary],
-    plan: ResearchPlan
-) -> List[KnowledgeBaseEntry]:
-    """Adds evidence to in-memory store."""
-    for s in new_summaries:
-        kb.append(KnowledgeBaseEntry(
-            summary=s.summary,
-            source=s.url,
-            confidence=0.9,
-            covered_objectives=[obj for obj in plan.objectives if any(k in s.summary.lower() for k in re.findall(r'\w+', obj.lower()) if len(k) > 4)],
-            supporting_evidence=s.summary[:300]
-        ))
-    return kb

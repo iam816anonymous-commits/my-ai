@@ -4,18 +4,23 @@ import psutil
 import os
 from rich.console import Console
 from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn, TaskID
 from datetime import datetime
-from typing import Dict, Any
-from web_research_agent.config import LOGS_DIR, OUTPUT_DIR, MAX_ITERATIONS, MAX_SEARCH_RESULTS
+from typing import Dict, Any, List
+from web_research_agent.config import (
+    LOGS_DIR, OUTPUT_DIR, MAX_ITERATIONS, MAX_SEARCH_RESULTS,
+    CONCURRENCY, TRACE_MODE, CONFIDENCE_THRESHOLD
+)
 from web_research_agent.tools.search import search_web
 from web_research_agent.tools.browser import fetch_all
 from web_research_agent.tools.extractor import extract_all
 from web_research_agent.tools.summarizer import summarize_article
-from web_research_agent.tools.reporter import generate_final_report, run_self_evaluation
+from web_research_agent.tools.reporter import generate_final_report, export_report
 from web_research_agent.tools.planner import generate_research_plan
-from web_research_agent.tools.reasoner import evaluate_research, update_knowledge_base, calculate_confidence
+from web_research_agent.tools.reasoner import evaluate_research, update_knowledge_base, calculate_explainable_confidence
+from web_research_agent.tools.trace import save_trace_artifacts
 from web_research_agent.models.llm import LLMClient
-from web_research_agent.models.schemas import ResearchState, ArticleSummary, EvidenceGraph, SourceQualityStats
+from web_research_agent.models.schemas import ResearchState, ArticleSummary, EvidenceGraph
 
 # Setup logging
 logging.basicConfig(
@@ -32,114 +37,124 @@ class ResearchAgent:
 
     def run(self, query: str):
         state = ResearchState(query=query)
-        logger.info(f"Initiating Research: {query}")
-        console.print(f"[bold blue]Initiating Analyst-Grade Research Agent[/bold blue]")
+        console.print(f"[bold blue]Initiating Analyst Research Platform[/bold blue]")
 
-        # 1. Planning
-        t_start = time.time()
-        console.print("[yellow]Phase 1: Analytical Planning...[/yellow]")
-        state.plan = generate_research_plan(query, self.llm_client)
-        state.profiling.slowest_functions["planning"] = time.time() - t_start
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeElapsedColumn(),
+            console=console
+        ) as progress:
 
-        # 2. Iterative Research Loop
-        while state.iterations < MAX_ITERATIONS:
-            state.iterations += 1
-            console.print(f"\n[bold green]Research Cycle {state.iterations}/{MAX_ITERATIONS}[/bold green]")
+            # 1. Planning
+            task_plan = progress.add_task("[yellow]Planning Stage", total=100)
+            t_start = time.time()
+            state.plan = generate_research_plan(query, self.llm_client)
+            progress.update(task_plan, completed=100)
+            state.profiling.stages["planning"] = time.time() - t_start
 
-            current_queries = state.plan.queries if state.iterations == 1 else state.follow_up_queries
-            if not current_queries: break
+            # 2. Iterative Research Loop
+            loop_total = MAX_ITERATIONS
+            task_loop = progress.add_task("[green]Research Cycles", total=loop_total)
 
-            # Search
-            t_sub = time.time()
-            scored_sources = search_web(current_queries, max_results_total=5)
-            urls = [s["url"] for s in scored_sources]
-            new_urls = [u for u in urls if u not in state.sources_collected]
-            state.urls_found += len(urls)
-            state.urls_filtered += (len(urls) - len(new_urls))
-            state.sources_collected.extend(new_urls)
-            state.profiling.slowest_functions[f"search_iter_{state.iterations}"] = time.time() - t_sub
+            while state.iterations < MAX_ITERATIONS:
+                state.iterations += 1
+                cycle_prefix = f"Cycle {state.iterations}: "
 
-            # Update Source Stats
-            for s in scored_sources:
-                stype = s["source_type"]
-                state.source_stats.type_counts[stype] = state.source_stats.type_counts.get(stype, 0) + 1
+                current_queries = state.plan.queries if state.iterations == 1 else state.follow_up_queries
+                if not current_queries: break
 
-            # Parallel Fetch & Extraction
-            t_sub = time.time()
-            html_contents = fetch_all(new_urls)
-            state.successful_downloads += sum(1 for h in html_contents.values() if h)
-            state.profiling.download_times.append(time.time() - t_sub)
+                # Search
+                progress.update(task_loop, description=f"[green]{cycle_prefix}Searching...")
+                t_sub = time.time()
+                scored_results, rejected = search_web(current_queries, max_results_total=5)
+                state.urls_found += (len(scored_results) + len(rejected))
+                state.urls_rejected.extend(rejected)
 
-            t_sub = time.time()
-            extracted_texts = extract_all({u: h for u, h in html_contents.items() if h})
-            valid_texts = {u: t for u, t in extracted_texts.items() if t}
-            state.successful_extractions += len(valid_texts)
-            state.profiling.extraction_times.append(time.time() - t_sub)
+                new_urls = [s["url"] for s in scored_results if s["url"] not in state.sources_collected]
+                state.sources_collected.extend(new_urls)
+                state.profiling.stages[f"search_iter_{state.iterations}"] = time.time() - t_sub
 
-            # Summarization
-            iteration_summaries = []
-            for url, text in valid_texts.items():
-                try:
+                if not new_urls: break
+
+                # Fetch & Extract
+                progress.update(task_loop, description=f"[green]{cycle_prefix}Fetching sources...")
+                t_sub = time.time()
+                html_map = fetch_all(new_urls, max_workers=CONCURRENCY)
+                state.successful_downloads += sum(1 for h in html_map.values() if h)
+
+                texts_map = extract_all({u: h for u, h in html_map.items() if h})
+                valid_texts = {u: t for u, t in texts_map.items() if t}
+                state.successful_extractions += len(valid_texts)
+                state.profiling.stages[f"extraction_iter_{state.iterations}"] = time.time() - t_sub
+
+                # Summarization
+                progress.update(task_loop, description=f"[green]{cycle_prefix}Summarizing...")
+                iteration_summaries = []
+                for url, text in valid_texts.items():
                     summary = summarize_article(text, self.llm_client)
-                    if "**Fallback summary" in summary: state.fallback_summaries_used += 1
-
-                    # Find source info for quality score
-                    s_info = next((s for s in scored_sources if s["url"] == url), {"score": 50, "source_type": "Unknown"})
+                    s_info = next((s for s in scored_results if s["url"] == url), {"score": 50, "source_type": "Unknown"})
 
                     article_summary = ArticleSummary(
-                        url=url,
-                        summary=summary,
-                        quality_score=float(s_info["score"]),
-                        source_type=s_info["source_type"]
+                        url=url, summary=summary, quality_score=float(s_info["score"]), source_type=s_info["source_type"]
                     )
                     iteration_summaries.append(article_summary)
                     state.summaries.append(article_summary)
                     state.successful_summaries += 1
-                except Exception as e:
-                    logger.warning(f"Summarization failed for {url}: {e}")
 
-            # Reasoning
+                state.knowledge_base = update_knowledge_base([], iteration_summaries, state.plan) # KB logic update
+
+                # Reasoning
+                progress.update(task_loop, description=f"[green]{cycle_prefix}Reasoning...")
+                t_sub = time.time()
+                res = evaluate_research(query, state.plan, state.summaries, self.llm_client, state.iterations)
+
+                state.objective_coverage = res.objective_coverage
+                state.contradictions.extend(res.contradictions)
+                state.follow_up_queries = res.follow_up_queries
+                state.evidence_graph = EvidenceGraph(items=res.evidence_items)
+                state.gaps = res.gaps
+
+                state.confidence_breakdown = calculate_explainable_confidence(state.model_dump())
+                state.confidence_evolution.append(state.confidence_breakdown.overall)
+                state.profiling.stages[f"reasoning_iter_{state.iterations}"] = time.time() - t_sub
+
+                progress.update(task_loop, advance=1)
+
+                # Check stopping threshold
+                avg_cov = sum(state.objective_coverage.values()) / len(state.objective_coverage) if state.objective_coverage else 0
+                if avg_cov >= CONFIDENCE_THRESHOLD and not res.continue_research:
+                     break
+
+            # 3. Final Report
+            task_report = progress.add_task("[cyan]Synthesizing Report", total=100)
             t_sub = time.time()
-            reasoning = evaluate_research(query, state.plan, state.summaries, self.llm_client, state.iterations)
-            state.objective_coverage = reasoning.objective_coverage
-            state.contradictions.extend(reasoning.contradictions)
-            state.follow_up_queries = reasoning.follow_up_queries
-            state.evidence_graph = EvidenceGraph(items=reasoning.evidence_items)
-            state.confidence_score = calculate_confidence(state.model_dump())
-            state.profiling.slowest_functions[f"reasoning_iter_{state.iterations}"] = time.time() - t_sub
+            final_content = generate_final_report(
+                state.summaries, state.plan, self.llm_client,
+                evidence_items=state.evidence_graph.items,
+                contradictions=state.contradictions,
+                confidence=state.confidence_breakdown,
+                gaps=state.gaps
+            )
 
-            if not reasoning.continue_research: break
+            # Exports
+            export_report(final_content, state.plan, state.model_dump())
+            progress.update(task_report, completed=100)
+            state.profiling.stages["reporting"] = time.time() - t_sub
 
-        # 4. Final Reporting
-        t_sub = time.time()
-        report_content = generate_final_report(
-            state.summaries, state.plan, self.llm_client,
-            evidence_items=state.evidence_graph.items,
-            contradictions=state.contradictions,
-            confidence_score=state.confidence_score
-        )
-        state.profiling.slowest_functions["reporting"] = time.time() - t_sub
+        # Trace
+        if TRACE_MODE:
+            save_trace_artifacts(state)
 
-        evaluation = run_self_evaluation(report_content, state.plan, self.llm_client)
+        console.print(f"[bold green]Research complete![/bold green] Report: {OUTPUT_DIR}/report.md")
+        self._display_summary(state)
 
-        # Save output
-        output_file = OUTPUT_DIR / "report.md"
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(report_content)
-            f.write("\n\n----- # Quality Audit\nGrade: " + evaluation.overall_grade + "\n" + evaluation.justification)
-
-        self._display_runtime_metrics(state, evaluation)
-        return state, evaluation
-
-    def _display_runtime_metrics(self, state: ResearchState, evaluation):
+    def _display_summary(self, state: ResearchState):
         runtime = datetime.now() - state.start_time
-        process = psutil.Process(os.getpid())
-        peak_mem = process.memory_info().rss / (1024 * 1024)
-
-        table = Table(title="Research Performance Metrics")
+        table = Table(title="Execution Summary")
         table.add_row("Total Runtime", str(runtime).split('.')[0])
-        table.add_row("Peak RAM", f"{peak_mem:.1f} MB")
-        table.add_row("Avg Coverage", f"{sum(state.objective_coverage.values())/len(state.objective_coverage):.0f}%" if state.objective_coverage else "0%")
-        table.add_row("Final Confidence", f"{state.confidence_score:.1f}/100")
-        table.add_row("Audit Grade", evaluation.overall_grade)
+        table.add_row("Final Confidence", f"{state.confidence_breakdown.overall if state.confidence_breakdown else 0}/100")
+        table.add_row("Sources Synthesized", str(len(state.summaries)))
         console.print(table)
