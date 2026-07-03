@@ -1,0 +1,128 @@
+{
+  "query": "What is Web3?",
+  "plan": {
+    "topic": "test",
+    "intent": "Technology",
+    "queries": [
+      "q1"
+    ],
+    "objectives": [
+      "obj1"
+    ]
+  },
+  "iterations": 1,
+  "urls_found": 6,
+  "urls_rejected": [
+    {
+      "url": "https://www.youtube.com/watch",
+      "score": 30.0,
+      "type": "General Web",
+      "rejection_reason": "Blacklisted domain"
+    }
+  ],
+  "successful_downloads": 4,
+  "successful_extractions": 4,
+  "successful_summaries": 4,
+  "fallback_summaries_used": 0,
+  "sources_collected": [
+    "https://news.google.com/stories/CAAqNggKIjBDQklTSGpvSmMzUnZjbmt0TXpZd1NoRUtEd2l1d3FIQUVSSGxTck5zYjVEbGZTZ0FQAQ",
+    "https://medium.com/privacy-perspectives/q1-is-almost-over-here-is-how-to-actually-get-caught-up-ff2fa8952057",
+    "https://www.linkedin.com/pulse/starting-strong-your-guide-thriving-q1-after-holidays-pedro-sx0nf",
+    "https://grokipedia.com/page/an_excellent_conceited_tragedie_of_romeo_and_juliet_(book)",
+    "https://deerruntreadmill.com/products/deerrun-q1-urban-mini-under-desk-treadmill-with-remote-control"
+  ],
+  "summaries": [
+    {
+      "url": "https://grokipedia.com/page/an_excellent_conceited_tragedie_of_romeo_and_juliet_(book)",
+      "summary": "# Mock Report",
+      "quality_score": 30.0,
+      "source_type": "General Web",
+      "title": null
+    },
+    {
+      "url": "https://news.google.com/stories/CAAqNggKIjBDQklTSGpvSmMzUnZjbmt0TXpZd1NoRUtEd2l1d3FIQUVSSGxTck5zYjVEbGZTZ0FQAQ",
+      "summary": "# Mock Report",
+      "quality_score": 98.0,
+      "source_type": "Official Documentation",
+      "title": null
+    },
+    {
+      "url": "https://www.linkedin.com/pulse/starting-strong-your-guide-thriving-q1-after-holidays-pedro-sx0nf",
+      "summary": "# Mock Report",
+      "quality_score": 35.0,
+      "source_type": "General Web",
+      "title": null
+    },
+    {
+      "url": "https://deerruntreadmill.com/products/deerrun-q1-urban-mini-under-desk-treadmill-with-remote-control",
+      "summary": "# Mock Report",
+      "quality_score": 30.0,
+      "source_type": "General Web",
+      "title": null
+    }
+  ],
+  "contradictions": [],
+  "evidence_graph": {
+    "items": []
+  },
+  "objective_coverage": {
+    "obj1": 100.0
+  },
+  "confidence_evolution": [
+    82.98
+  ],
+  "confidence_breakdown": {
+    "overall": 82.98,
+    "coverage": 100.0,
+    "evidence_strength": 48.25,
+    "source_diversity": 66.67,
+    "agreement": 100.0,
+    "extraction_quality": 95.0,
+    "missing_evidence_penalty": 0.0,
+    "contradiction_penalty": 0.0
+  },
+  "follow_up_queries": [],
+  "gaps": [],
+  "start_time": "2026-07-03T07:26:49.579297",
+  "profiling": {
+    "stages": {
+      "planning": 0.00018405914306640625,
+      "search_iter_1": 1.217717170715332,
+      "extraction_iter_1": 2.65091609954834,
+      "reasoning_iter_1": 0.00041174888610839844
+    },
+    "prompt_tokens": 0,
+    "response_tokens": 0
+  },
+  "knowledge_base": [
+    {
+      "summary": "# Mock Report",
+      "source": "https://grokipedia.com/page/an_excellent_conceited_tragedie_of_romeo_and_juliet_(book)",
+      "confidence": 0.9,
+      "covered_objectives": [],
+      "supporting_evidence": "# Mock Report"
+    },
+    {
+      "summary": "# Mock Report",
+      "source": "https://news.google.com/stories/CAAqNggKIjBDQklTSGpvSmMzUnZjbmt0TXpZd1NoRUtEd2l1d3FIQUVSSGxTck5zYjVEbGZTZ0FQAQ",
+      "confidence": 0.9,
+      "covered_objectives": [],
+      "supporting_evidence": "# Mock Report"
+    },
+    {
+      "summary": "# Mock Report",
+      "source": "https://www.linkedin.com/pulse/starting-strong-your-guide-thriving-q1-after-holidays-pedro-sx0nf",
+      "confidence": 0.9,
+      "covered_objectives": [],
+      "supporting_evidence": "# Mock Report"
+    },
+    {
+      "summary": "# Mock Report",
+      "source": "https://deerruntreadmill.com/products/deerrun-q1-urban-mini-under-desk-treadmill-with-remote-control",
+      "confidence": 0.9,
+      "covered_objectives": [],
+      "supporting_evidence": "# Mock Report"
+    }
+  ],
+  "confidence_score": 0.0
+}

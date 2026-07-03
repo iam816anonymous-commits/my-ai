@@ -1,6 +1,7 @@
 import logging
 import json
 from typing import List, Dict, Optional
+from datetime import datetime
 from web_research_agent.models.llm import LLMClient
 from web_research_agent.models.schemas import (
     ArticleSummary, ResearchPlan, Contradiction,
@@ -73,6 +74,12 @@ def generate_final_report(
         logger.error(f"Report synthesis failed: {e}")
         return "# Synthesis Failed\nRaw summaries provided below.\n" + evidence_text
 
+class DateTimeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
+
 def export_report(content: str, plan: ResearchPlan, state_data: Dict):
     """Handles multi-format exports."""
     base_name = "report"
@@ -83,7 +90,7 @@ def export_report(content: str, plan: ResearchPlan, state_data: Dict):
 
     if "json" in EXPORT_FORMATS:
         with open(OUTPUT_DIR / f"{base_name}.json", "w", encoding="utf-8") as f:
-            json.dump(state_data, f, indent=2)
+            json.dump(state_data, f, indent=2, cls=DateTimeEncoder)
 
     if "html" in EXPORT_FORMATS:
         html_wrapper = f"""
@@ -100,7 +107,6 @@ def export_report(content: str, plan: ResearchPlan, state_data: Dict):
         </body>
         </html>
         """
-        # Note: Very crude MD to HTML conversion for demo purposes. In prod, use 'markdown' library.
         with open(OUTPUT_DIR / f"{base_name}.html", "w", encoding="utf-8") as f:
             f.write(html_wrapper)
 
@@ -117,7 +123,14 @@ def run_self_evaluation(report_content: str, plan: ResearchPlan, llm_client: LLM
     Return JSON evaluation:
     {{
         "overall_grade": "A/B/C/D/F",
-        "justification": "Short reason for grade"
+        "justification": "Short reason for grade",
+        "coverage_score": 0.0,
+        "evidence_score": 0.0,
+        "readability_score": 0.0,
+        "citation_quality": 0.0,
+        "objectivity": 0.0,
+        "bias_risk": 0.0,
+        "novel_insights": 0.0
     }}
     """
     sys_prompt = "You are an AI Quality Auditor. Be strict and objective."

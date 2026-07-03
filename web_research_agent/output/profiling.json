@@ -1,0 +1,11 @@
+{
+  "stages": {
+    "planning": 0.00018405914306640625,
+    "search_iter_1": 1.217717170715332,
+    "extraction_iter_1": 2.65091609954834,
+    "reasoning_iter_1": 0.00041174888610839844,
+    "reporting": 0.0016739368438720703
+  },
+  "prompt_tokens": 0,
+  "response_tokens": 0
+}

@@ -105,14 +105,23 @@ class ResearchState(BaseModel):
     objective_coverage: Dict[str, float] = Field(default_factory=dict)
     confidence_evolution: List[float] = Field(default_factory=list)
     confidence_breakdown: Optional[ConfidenceBreakdown] = None
+    follow_up_queries: List[str] = Field(default_factory=list)
     gaps: List[ResearchGap] = Field(default_factory=list)
     start_time: datetime = Field(default_factory=datetime.now)
     profiling: ProfilingStats = Field(default_factory=ProfilingStats)
     knowledge_base: List[KnowledgeBaseEntry] = Field(default_factory=list)
+    confidence_score: float = 0.0
 
 class SelfEvaluation(BaseModel):
     overall_grade: str
     justification: str
+    coverage_score: float = 0.0
+    evidence_score: float = 0.0
+    readability_score: float = 0.0
+    citation_quality: float = 0.0
+    objectivity: float = 0.0
+    bias_risk: float = 0.0
+    novel_insights: float = 0.0
 
 class ResearchReport(BaseModel):
     title: str
