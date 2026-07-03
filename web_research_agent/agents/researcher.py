@@ -1,7 +1,5 @@
 import logging
 import time
-import psutil
-import os
 from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn, TaskID
@@ -9,7 +7,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Tuple
 from web_research_agent.config import (
     LOGS_DIR, OUTPUT_DIR, MAX_ITERATIONS, MAX_SEARCH_RESULTS,
-    CONCURRENCY, TRACE_MODE, CONFIDENCE_THRESHOLD
+    CONCURRENCY, TRACE_MODE, CONFIDENCE_THRESHOLD, EVIDENCE_SATURATION_THRESHOLD
 )
 from web_research_agent.tools.search import search_web
 from web_research_agent.tools.browser import fetch_all
@@ -22,12 +20,7 @@ from web_research_agent.tools.trace import save_trace_artifacts
 from web_research_agent.models.llm import LLMClient
 from web_research_agent.models.schemas import ResearchState, ArticleSummary, EvidenceGraph, SelfEvaluation
 
-# Setup logging
-logging.basicConfig(
-    filename=LOGS_DIR / "research.log",
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(filename=LOGS_DIR / "research.log", level=logging.INFO, format="%(asctime)s - %(name)s - %(message)s")
 logger = logging.getLogger(__name__)
 console = Console()
 
@@ -37,69 +30,53 @@ class ResearchAgent:
 
     def run(self, query: str) -> Tuple[ResearchState, SelfEvaluation]:
         state = ResearchState(query=query)
-        console.print(f"[bold blue]Initiating Analyst Research Platform[/bold blue]")
+        console.print(f"[bold blue]Production Research Platform[/bold blue] | Query: [cyan]{query}[/cyan]")
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TimeElapsedColumn(),
-            console=console
-        ) as progress:
-
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), TimeElapsedColumn(), console=console) as progress:
             # 1. Planning
-            task_plan = progress.add_task("[yellow]Planning Stage", total=100)
-            t_start = time.time()
+            t_plan = progress.add_task("[yellow]Planning...", total=100)
             state.plan = generate_research_plan(query, self.llm_client)
-            progress.update(task_plan, completed=100)
-            state.profiling.stages["planning"] = time.time() - t_start
+            progress.update(t_plan, completed=100)
+            state.profiling.stages["planning"] = progress.tasks[t_plan].elapsed or 0.0
 
-            # 2. Iterative Research Loop
-            loop_total = MAX_ITERATIONS
-            task_loop = progress.add_task("[green]Research Cycles", total=loop_total)
-
+            # 2. Loop
+            t_loop = progress.add_task("[green]Research Cycles", total=MAX_ITERATIONS)
             while state.iterations < MAX_ITERATIONS:
                 state.iterations += 1
-                cycle_prefix = f"Cycle {state.iterations}: "
+                curr_queries = state.plan.queries if state.iterations == 1 else state.follow_up_queries
+                if not curr_queries: break
 
-                current_queries = state.plan.queries if state.iterations == 1 else state.follow_up_queries
-                if not current_queries: break
-
-                # Search
-                progress.update(task_loop, description=f"[green]{cycle_prefix}Searching...")
-                t_sub = time.time()
-                scored_results, rejected = search_web(current_queries, max_results_total=MAX_SEARCH_RESULTS)
-                state.urls_found += (len(scored_results) + len(rejected))
+                # Search & Quality Rank
+                progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Searching & Ranking...")
+                scored, rejected, health = search_web(curr_queries, MAX_SEARCH_RESULTS)
+                state.search_health.update(health)
+                state.urls_found += (len(scored) + len(rejected))
                 state.urls_rejected.extend(rejected)
 
-                new_urls = [s["url"] for s in scored_results if s["url"] not in state.sources_collected]
-                state.sources_collected.extend(new_urls)
-                state.profiling.stages[f"search_iter_{state.iterations}"] = time.time() - t_sub
+                new_sources = [s for s in scored if s["url"] not in state.sources_collected]
+                state.sources_collected.extend([s["url"] for s in new_sources])
 
-                if not new_urls: break
+                if not new_sources: break
 
-                # Fetch & Extract
-                progress.update(task_loop, description=f"[green]{cycle_prefix}Fetching sources...")
-                t_sub = time.time()
-                html_map = fetch_all(new_urls, max_workers=CONCURRENCY)
+                # Smart Fetch & Parallel Extraction
+                progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Fetching Top Sources ({len(new_sources)})...")
+                html_map = fetch_all([s["url"] for s in new_sources], CONCURRENCY)
                 state.successful_downloads += sum(1 for h in html_map.values() if h)
+                state.failed_downloads += sum(1 for h in html_map.values() if not h)
 
-                texts_map = extract_all({u: h for u, h in html_map.items() if h})
+                valid_html = {u: h for u, h in html_map.items() if h}
+                texts_map = extract_all(valid_html)
                 valid_texts = {u: t for u, t in texts_map.items() if t}
                 state.successful_extractions += len(valid_texts)
-                state.profiling.stages[f"extraction_iter_{state.iterations}"] = time.time() - t_sub
 
-                # Summarization
-                progress.update(task_loop, description=f"[green]{cycle_prefix}Summarizing...")
+                # Summarization (Sequential for token management)
+                progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Processing Content...")
                 iteration_summaries = []
                 for url, text in valid_texts.items():
                     summary = summarize_article(text, self.llm_client)
-                    s_info = next((s for s in scored_results if s["url"] == url), {"score": 50, "source_type": "Unknown"})
-
-                    article_summary = ArticleSummary(
-                        url=url, summary=summary, quality_score=float(s_info["score"]), source_type=s_info["source_type"]
-                    )
+                    state.profiling.llm_calls += 1
+                    s_info = next((s for s in new_sources if s["url"] == url), {"score": 50, "tier": 5, "source_type": "Unknown"})
+                    article_summary = ArticleSummary(url=url, summary=summary, quality_score=float(s_info["score"]), source_tier=s_info["tier"], source_type=s_info["source_type"])
                     iteration_summaries.append(article_summary)
                     state.summaries.append(article_summary)
                     state.successful_summaries += 1
@@ -107,62 +84,42 @@ class ResearchAgent:
                 state.knowledge_base = update_knowledge_base(state.knowledge_base, iteration_summaries, state.plan)
 
                 # Reasoning
-                progress.update(task_loop, description=f"[green]{cycle_prefix}Reasoning...")
-                t_sub = time.time()
+                progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Evaluating Evidence...")
                 res = evaluate_research(query, state.plan, state.summaries, self.llm_client, state.iterations)
-
                 state.objective_coverage = res.objective_coverage
                 state.contradictions.extend(res.contradictions)
                 state.follow_up_queries = res.follow_up_queries
                 state.evidence_graph = EvidenceGraph(items=res.evidence_items)
                 state.gaps = res.gaps
-
                 state.confidence_breakdown = calculate_explainable_confidence(state.model_dump())
                 state.confidence_evolution.append(state.confidence_breakdown.overall)
-                state.profiling.stages[f"reasoning_iter_{state.iterations}"] = time.time() - t_sub
 
-                progress.update(task_loop, advance=1)
+                progress.update(t_loop, advance=1)
 
-                # Check stopping threshold
+                # Intelligent Termination
                 avg_cov = sum(state.objective_coverage.values()) / len(state.objective_coverage) if state.objective_coverage else 0
-                if avg_cov >= CONFIDENCE_THRESHOLD and not res.continue_research:
-                     break
+                tier1_count = sum(1 for s in state.summaries if s.source_tier == 1)
+                if avg_cov >= CONFIDENCE_THRESHOLD or tier1_count >= EVIDENCE_SATURATION_THRESHOLD:
+                    console.print(f"[dim]Evidence saturation reached ({tier1_count} Tier-1 sources, {avg_cov:.0f}% coverage).[/dim]")
+                    break
 
-            # 3. Final Report
-            task_report = progress.add_task("[cyan]Synthesizing Report", total=100)
-            t_sub = time.time()
-            final_content = generate_final_report(
-                state.summaries, state.plan, self.llm_client,
-                evidence_items=state.evidence_graph.items,
-                contradictions=state.contradictions,
-                confidence=state.confidence_breakdown,
-                gaps=state.gaps
-            )
-
-            # 4. Quality Evaluation
+            # 3. Synthesis
+            t_report = progress.add_task("[cyan]Synthesis...", total=100)
+            final_content = generate_final_report(state.summaries, state.plan, self.llm_client, state.evidence_graph.items, state.contradictions, state.confidence_breakdown, state.gaps)
             evaluation = run_self_evaluation(final_content, state.plan, self.llm_client)
-
-            # Exports
             export_report(final_content, state.plan, state.model_dump())
-            progress.update(task_report, completed=100)
-            state.profiling.stages["reporting"] = time.time() - t_sub
+            progress.update(t_report, completed=100)
 
-        # Trace
-        if TRACE_MODE:
-            save_trace_artifacts(state)
-
-        console.print(f"[bold green]Research complete![/bold green] Report: {OUTPUT_DIR}/report.md")
-        self._display_summary(state, evaluation)
+        if TRACE_MODE: save_trace_artifacts(state)
+        self._display_stats(state, evaluation)
         return state, evaluation
 
-    def _display_summary(self, state: ResearchState, evaluation: SelfEvaluation):
+    def _display_stats(self, state, evaluation):
         runtime = datetime.now() - state.start_time
-        table = Table(title="Execution Summary")
-        table.add_column("Metric", style="cyan")
-        table.add_column("Value", style="magenta")
-        table.add_row("Total Runtime", str(runtime).split('.')[0])
-        table.add_row("Final Confidence", f"{state.confidence_breakdown.overall if state.confidence_breakdown else 0}/100")
-        table.add_row("Avg Coverage", f"{sum(state.objective_coverage.values())/len(state.objective_coverage):.0f}%" if state.objective_coverage else "0%")
-        table.add_row("Sources Synthesized", str(len(state.summaries)))
-        table.add_row("Self Evaluation Grade", evaluation.overall_grade)
+        table = Table(title="Execution Profile", box=None)
+        table.add_column("Metric", style="dim"); table.add_column("Value")
+        table.add_row("Runtime", str(runtime).split('.')[0])
+        table.add_row("LLM Calls", str(state.profiling.llm_calls))
+        table.add_row("Confidence", f"{state.confidence_breakdown.overall if state.confidence_breakdown else 0:.1f}/100")
+        table.add_row("Grade", f"[bold yellow]{evaluation.overall_grade}[/bold yellow]")
         console.print(table)

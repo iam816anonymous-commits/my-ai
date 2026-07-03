@@ -1,98 +1,89 @@
 import logging
 import requests
 import io
+import asyncio
+import aiohttp
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict
-from web_research_agent.config import REQUEST_TIMEOUT, MAX_RETRIES
+from typing import List, Dict, Optional, Tuple
+from web_research_agent.config import REQUEST_TIMEOUT, MAX_RETRIES, CONCURRENCY
 import pypdf
 
 logger = logging.getLogger(__name__)
 
-# Global session with connection pooling
-_session = None
+# Cache for extractions and summaries (simulated in memory)
+_extraction_cache = {}
 
-def get_session():
-    global _session
-    if _session is None:
-        _session = requests.Session()
-        retry_strategy = Retry(
-            total=MAX_RETRIES,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["HEAD", "GET", "OPTIONS"]
-        )
-        adapter = HTTPAdapter(
-            max_retries=retry_strategy,
-            pool_connections=10,
-            pool_maxsize=20
-        )
-        _session.mount("http://", adapter)
-        _session.mount("https://", adapter)
-    return _session
+def get_cached_extraction(url: str) -> Optional[str]:
+    return _extraction_cache.get(url)
+
+def cache_extraction(url: str, text: str):
+    _extraction_cache[url] = text
+
+async def fetch_url_async(session: aiohttp.ClientSession, url: str) -> Tuple[str, str]:
+    """Async fetch for improved performance."""
+    headers = {"User-Agent": "Mozilla/5.0 (Analyst Research Agent)"}
+    try:
+        async with session.get(url, headers=headers, timeout=REQUEST_TIMEOUT) as response:
+            if response.status == 200:
+                # Handle ArXiv HTML preference
+                if "arxiv.org/pdf/" in url:
+                    html_url = url.replace("/pdf/", "/html/").replace(".pdf", "")
+                    try:
+                        async with session.get(html_url, headers=headers, timeout=5) as h_resp:
+                            if h_resp.status == 200:
+                                return url, await h_resp.text()
+                    except: pass
+
+                if 'application/pdf' in response.headers.get('Content-Type', '').lower():
+                    content = await response.read()
+                    return url, "PDF_CONTENT:" + content.hex() # Marker for sync processing
+
+                return url, await response.text()
+            return url, ""
+    except Exception as e:
+        logger.error(f"Async fetch failed for {url}: {e}")
+        return url, ""
+
+async def fetch_all_async(urls: List[str]) -> Dict[str, str]:
+    """Orchestrates async downloads."""
+    results = {}
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch_url_async(session, url) for url in urls]
+        responses = await asyncio.gather(*tasks)
+        for url, content in responses:
+            results[url] = content
+    return results
+
+def fetch_all(urls: List[str], max_workers: int = CONCURRENCY) -> Dict[str, str]:
+    """Wrapper to run async loop in sync environment."""
+    # Check cache first
+    needed_urls = [u for u in urls if u not in _extraction_cache]
+
+    if not needed_urls:
+        return {u: "CACHED" for u in urls}
+
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    fetched = loop.run_until_complete(fetch_all_async(needed_urls))
+
+    # Process PDF markers synchronously
+    from web_research_agent.tools.browser import extract_text_from_pdf
+    for url, content in fetched.items():
+        if isinstance(content, str) and content.startswith("PDF_CONTENT:"):
+            hex_data = content.split(":", 1)[1]
+            fetched[url] = extract_text_from_pdf(bytes.fromhex(hex_data))
+
+    return fetched
 
 def extract_text_from_pdf(content: bytes) -> str:
-    """Extracts plain text from PDF bytes."""
     try:
         pdf_file = io.BytesIO(content)
         reader = pypdf.PdfReader(pdf_file)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() + "\n"
-        return text
-    except Exception as e:
-        logger.error(f"PDF extraction failed: {e}")
-        return ""
-
-def fetch_html(url: str, timeout: int = REQUEST_TIMEOUT) -> str:
-    """
-    Downloads webpage content using connection pooling and retries.
-    Handles PDF extraction for ArXiv.
-    """
-    session = get_session()
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-
-    try:
-        # Check for ArXiv HTML conversion preference if it's a PDF
-        if url.endswith(".pdf") and "arxiv.org/pdf/" in url:
-            alt_url = url.replace("/pdf/", "/html/").replace(".pdf", "")
-            try:
-                alt_resp = session.get(alt_url, headers=headers, timeout=timeout)
-                if alt_resp.status_code == 200:
-                    return alt_resp.text
-            except:
-                pass
-
-        response = session.get(url, headers=headers, timeout=timeout)
-        response.raise_for_status()
-
-        # Handle PDF content
-        content_type = response.headers.get('Content-Type', '').lower()
-        if 'application/pdf' in content_type or url.endswith('.pdf'):
-            logger.info(f"Extracting text from PDF: {url}")
-            return extract_text_from_pdf(response.content)
-
-        return response.text
-    except Exception as e:
-        logger.error(f"Failed to fetch {url}: {e}")
-        return ""
-
-def fetch_all(urls: List[str], max_workers: int = 5) -> Dict[str, str]:
-    """
-    Downloads multiple webpages in parallel.
-    """
-    results = {}
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_url = {executor.submit(fetch_html, url): url for url in urls}
-        for future in as_completed(future_to_url):
-            url = future_to_url[future]
-            try:
-                content = future.result()
-                results[url] = content
-            except Exception as e:
-                logger.error(f"Parallel fetch failed for {url}: {e}")
-                results[url] = ""
-    return results
+        return "\n".join([p.extract_text() for p in reader.pages])
+    except: return ""

@@ -1,7 +1,7 @@
 import logging
 import json
+import re
 from typing import List, Dict, Optional
-from datetime import datetime
 from web_research_agent.models.llm import LLMClient
 from web_research_agent.models.schemas import (
     ArticleSummary, ResearchPlan, Contradiction,
@@ -12,134 +12,80 @@ from web_research_agent.config import OUTPUT_DIR, EXPORT_FORMATS
 logger = logging.getLogger(__name__)
 
 def generate_final_report(
-    summaries: List[ArticleSummary],
-    plan: ResearchPlan,
-    llm_client: LLMClient,
-    evidence_items: List[EvidenceItem],
-    contradictions: List[Contradiction],
-    confidence: ConfidenceBreakdown,
-    gaps: List[ResearchGap]
+    summaries: List[ArticleSummary], plan: ResearchPlan, llm_client: LLMClient,
+    evidence_items: List[EvidenceItem], contradictions: List[Contradiction],
+    confidence: ConfidenceBreakdown, gaps: List[ResearchGap]
 ) -> str:
-    """
-    Enhanced synthesis engine with academic citations and dashboard.
-    """
-    evidence_text = "\n".join([f"SOURCE [{i+1}]: {s.url}\nCONTENT: {s.summary}" for i, s in enumerate(summaries)])
+    """Analytical synthesis with academic citations."""
+    evidence_text = "\n".join([f"SOURCE [{i+1}]: {s.url} ({s.source_type})\n{s.summary}" for i, s in enumerate(summaries)])
 
     prompt = f"""
-    TOPIC: {plan.topic}
-    OBJECTIVES: {plan.objectives}
-    SOURCES & EVIDENCE:
-    {evidence_text[:12000]}
+    TOPIC: {plan.topic} | INTENT: {plan.intent}
+    SOURCES & EVIDENCE: {evidence_text[:12000]}
 
-    TASK: Write an analyst-grade research report.
-    - Style: Formal, concise, data-driven.
-    - Citations: Use inline numbers like [1], [2, 3] to attribute every major fact to the source index.
+    TASK: Analytical synthesis (McKinsey/Gartner style).
+    - Use inline academic citations: [1], [2, 4].
+    - Cross-reference sources. Explain conflicts.
 
-    REPORT STRUCTURE:
+    STRUCTURE:
     # {plan.topic}
-
-    ## Executive Dashboard
-    (Top-line conclusions and a Research Scorecard)
-
+    ## Executive Dashboard (Conclusion + Scorecard)
     ## Key Takeaways
-    (3-5 critical insights)
-
     ## Background
-
-    ## Detailed Analysis
-    (Synthesized analysis using inline citations [1], [2], etc.)
-
-    ## Supporting Evidence
-    (Structured claims and attributed sources)
-
+    ## Detailed Analysis (Synthesized, cited [1])
+    ## Supporting Evidence (Claims, Sources, Strength)
     ## Contradictions & Conflicts
-
-    ## Research Gaps
-    (What remains unknown)
-
-    ## Confidence Breakdown
-    (Detailed explanation of the {confidence.overall}/100 score)
-
-    ## References
-    (Mapped to the numbers used in citations)
-
+    ## Research Gaps (Detailed analysis)
+    ## Confidence Breakdown ({confidence.overall}/100)
+    ## References (Numbered 1, 2...)
     ## Further Reading
     """
-    sys_prompt = "Senior Analyst Synthesis Engine. Use academic citation format [n]. High professional quality only."
-
     try:
-        report_content = llm_client.call(prompt, sys_prompt)
-        return report_content
+        content = llm_client.call(prompt, "Senior Analyst Synthesis Engine. Use citations.")
+        return validate_and_repair_report(content, summaries)
     except Exception as e:
-        logger.error(f"Report synthesis failed: {e}")
-        return "# Synthesis Failed\nRaw summaries provided below.\n" + evidence_text
+        logger.error(f"Synthesis fail: {e}")
+        return "# Synthesis Failed\n" + evidence_text
 
-class DateTimeEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        return super().default(obj)
+def validate_and_repair_report(content: str, summaries: List[ArticleSummary]) -> str:
+    """Repairs malformed citations and removes duplicates."""
+    # Simple deduplication of sections if any
+    lines = content.split('\n')
+    seen_headers = set()
+    cleaned_lines = []
+    for line in lines:
+        if line.startswith('## '):
+            if line in seen_headers: continue
+            seen_headers.add(line)
+        cleaned_lines.append(line)
+
+    repaired = '\n'.join(cleaned_lines)
+    # Ensure references are present
+    if "## References" not in repaired:
+        ref_list = "\n".join([f"[{i+1}] {s.url}" for i, s in enumerate(summaries)])
+        repaired += f"\n\n## References\n{ref_list}"
+    return repaired
 
 def export_report(content: str, plan: ResearchPlan, state_data: Dict):
-    """Handles multi-format exports."""
-    base_name = "report"
-
+    base = "report"
     if "markdown" in EXPORT_FORMATS:
-        with open(OUTPUT_DIR / f"{base_name}.md", "w", encoding="utf-8") as f:
-            f.write(content)
-
+        with open(OUTPUT_DIR / f"{base}.md", "w") as f: f.write(content)
     if "json" in EXPORT_FORMATS:
-        with open(OUTPUT_DIR / f"{base_name}.json", "w", encoding="utf-8") as f:
-            json.dump(state_data, f, indent=2, cls=DateTimeEncoder)
-
+        from web_research_agent.tools.reporter import DateTimeEncoder
+        with open(OUTPUT_DIR / f"{base}.json", "w") as f: json.dump(state_data, f, indent=2, cls=DateTimeEncoder)
     if "html" in EXPORT_FORMATS:
-        html_wrapper = f"""
-        <html>
-        <head>
-            <style>
-                body {{ font-family: sans-serif; line-height: 1.6; max-width: 800px; margin: 40px auto; padding: 20px; }}
-                h1, h2 {{ border-bottom: 1px solid #eee; }}
-                pre {{ background: #f4f4f4; padding: 15px; overflow: auto; }}
-            </style>
-        </head>
-        <body>
-            {content.replace('# ', '<h1>').replace('## ', '<h2>').replace('### ', '<h3>').replace('\n', '<br>')}
-        </body>
-        </html>
-        """
-        with open(OUTPUT_DIR / f"{base_name}.html", "w", encoding="utf-8") as f:
-            f.write(html_wrapper)
+        html = f"<html><body>{content.replace('# ', '<h1>').replace('## ', '<h2>').replace('\\n', '<br>')}</body></html>"
+        with open(OUTPUT_DIR / f"{base}.html", "w") as f: f.write(html)
 
-def run_self_evaluation(report_content: str, plan: ResearchPlan, llm_client: LLMClient) -> SelfEvaluation:
-    """
-    Automatically evaluates the quality of the generated report.
-    """
-    prompt = f"""
-    Analyze the following research report for quality and objectivity.
-    TOPIC: {plan.topic}
-    REPORT:
-    {report_content[:8000]}
-
-    Return JSON evaluation:
-    {{
-        "overall_grade": "A/B/C/D/F",
-        "justification": "Short reason for grade",
-        "coverage_score": 0.0,
-        "evidence_score": 0.0,
-        "readability_score": 0.0,
-        "citation_quality": 0.0,
-        "objectivity": 0.0,
-        "bias_risk": 0.0,
-        "novel_insights": 0.0
-    }}
-    """
-    sys_prompt = "You are an AI Quality Auditor. Be strict and objective."
-
+def run_self_evaluation(report: str, plan: ResearchPlan, llm_client: LLMClient) -> SelfEvaluation:
+    prompt = f"Topic: {plan.topic}\nReport: {report[:8000]}\nEvaluate quality (A-F). JSON: overall_grade, justification, coverage_score, evidence_score, readability_score."
     try:
-        data = llm_client.get_json(prompt, sys_prompt)
-        return SelfEvaluation(**data)
-    except Exception as e:
-        logger.error(f"Self-evaluation failed: {e}")
-        return SelfEvaluation(
-            overall_grade="U", justification="Evaluation engine failed."
-        )
+        return SelfEvaluation(**llm_client.get_json(prompt, "AI Auditor."))
+    except:
+        return SelfEvaluation(overall_grade="U", justification="Evaluation failed.")
+
+from datetime import datetime
+class DateTimeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime): return obj.isoformat()
+        return super().default(obj)

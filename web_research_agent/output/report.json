@@ -16,49 +16,68 @@
     {
       "url": "https://www.youtube.com/watch",
       "score": 30.0,
+      "tier": 5,
       "type": "General Web",
-      "rejection_reason": "Blacklisted domain"
+      "rejection_reason": "Blacklisted"
     }
   ],
-  "successful_downloads": 4,
-  "successful_extractions": 4,
-  "successful_summaries": 4,
+  "successful_downloads": 5,
+  "failed_downloads": 0,
+  "successful_extractions": 5,
+  "successful_summaries": 5,
   "fallback_summaries_used": 0,
   "sources_collected": [
+    "https://www.google.com",
     "https://news.google.com/stories/CAAqNggKIjBDQklTSGpvSmMzUnZjbmt0TXpZd1NoRUtEd2l1d3FIQUVSSGxTck5zYjVEbGZTZ0FQAQ",
-    "https://medium.com/privacy-perspectives/q1-is-almost-over-here-is-how-to-actually-get-caught-up-ff2fa8952057",
-    "https://www.linkedin.com/pulse/starting-strong-your-guide-thriving-q1-after-holidays-pedro-sx0nf",
     "https://grokipedia.com/page/an_excellent_conceited_tragedie_of_romeo_and_juliet_(book)",
-    "https://deerruntreadmill.com/products/deerrun-q1-urban-mini-under-desk-treadmill-with-remote-control"
+    "https://www.sarthaks.com/243379/two-point-charges-q1-and-q2-are-placed-0-30-m-apart-on-the-x-axis-as-shown-in-the-figure-above",
+    "https://www.yumpu.com/en/document/view/26387872/chapter-21-211-what-must-the-distance-between-point-charge-q1-"
   ],
   "summaries": [
+    {
+      "url": "https://www.google.com",
+      "summary": "# Mock Report",
+      "quality_score": 85.0,
+      "source_type": "Official Documentation/Corp",
+      "source_tier": 2,
+      "title": null,
+      "publication_date": null
+    },
+    {
+      "url": "https://news.google.com/stories/CAAqNggKIjBDQklTSGpvSmMzUnZjbmt0TXpZd1NoRUtEd2l1d3FIQUVSSGxTck5zYjVEbGZTZ0FQAQ",
+      "summary": "# Mock Report",
+      "quality_score": 85.0,
+      "source_type": "Official Documentation/Corp",
+      "source_tier": 2,
+      "title": null,
+      "publication_date": null
+    },
     {
       "url": "https://grokipedia.com/page/an_excellent_conceited_tragedie_of_romeo_and_juliet_(book)",
       "summary": "# Mock Report",
       "quality_score": 30.0,
       "source_type": "General Web",
-      "title": null
+      "source_tier": 5,
+      "title": null,
+      "publication_date": null
     },
     {
-      "url": "https://news.google.com/stories/CAAqNggKIjBDQklTSGpvSmMzUnZjbmt0TXpZd1NoRUtEd2l1d3FIQUVSSGxTck5zYjVEbGZTZ0FQAQ",
-      "summary": "# Mock Report",
-      "quality_score": 98.0,
-      "source_type": "Official Documentation",
-      "title": null
-    },
-    {
-      "url": "https://www.linkedin.com/pulse/starting-strong-your-guide-thriving-q1-after-holidays-pedro-sx0nf",
-      "summary": "# Mock Report",
-      "quality_score": 35.0,
-      "source_type": "General Web",
-      "title": null
-    },
-    {
-      "url": "https://deerruntreadmill.com/products/deerrun-q1-urban-mini-under-desk-treadmill-with-remote-control",
+      "url": "https://www.sarthaks.com/243379/two-point-charges-q1-and-q2-are-placed-0-30-m-apart-on-the-x-axis-as-shown-in-the-figure-above",
       "summary": "# Mock Report",
       "quality_score": 30.0,
       "source_type": "General Web",
-      "title": null
+      "source_tier": 5,
+      "title": null,
+      "publication_date": null
+    },
+    {
+      "url": "https://www.yumpu.com/en/document/view/26387872/chapter-21-211-what-must-the-distance-between-point-charge-q1-",
+      "summary": "# Mock Report",
+      "quality_score": 30.0,
+      "source_type": "General Web",
+      "source_tier": 5,
+      "title": null,
+      "publication_date": null
     }
   ],
   "contradictions": [],
@@ -69,35 +88,33 @@
     "obj1": 100.0
   },
   "confidence_evolution": [
-    82.98
+    87.07
   ],
   "confidence_breakdown": {
-    "overall": 82.98,
+    "overall": 87.07,
     "coverage": 100.0,
-    "evidence_strength": 48.25,
-    "source_diversity": 66.67,
+    "evidence_strength": 52.0,
+    "source_diversity": 83.33,
     "agreement": 100.0,
     "extraction_quality": 95.0,
     "missing_evidence_penalty": 0.0,
     "contradiction_penalty": 0.0
   },
-  "follow_up_queries": [],
   "gaps": [],
-  "start_time": "2026-07-03T07:26:49.579297",
+  "start_time": "2026-07-03T09:54:09.708593",
   "profiling": {
     "stages": {
-      "planning": 0.00018405914306640625,
-      "search_iter_1": 1.217717170715332,
-      "extraction_iter_1": 2.65091609954834,
-      "reasoning_iter_1": 0.00041174888610839844
+      "planning": 0.0005264139999781037
     },
     "prompt_tokens": 0,
-    "response_tokens": 0
+    "response_tokens": 0,
+    "llm_calls": 5,
+    "cache_hits": 0
   },
   "knowledge_base": [
     {
       "summary": "# Mock Report",
-      "source": "https://grokipedia.com/page/an_excellent_conceited_tragedie_of_romeo_and_juliet_(book)",
+      "source": "https://www.google.com",
       "confidence": 0.9,
       "covered_objectives": [],
       "supporting_evidence": "# Mock Report"
@@ -111,18 +128,36 @@
     },
     {
       "summary": "# Mock Report",
-      "source": "https://www.linkedin.com/pulse/starting-strong-your-guide-thriving-q1-after-holidays-pedro-sx0nf",
+      "source": "https://grokipedia.com/page/an_excellent_conceited_tragedie_of_romeo_and_juliet_(book)",
       "confidence": 0.9,
       "covered_objectives": [],
       "supporting_evidence": "# Mock Report"
     },
     {
       "summary": "# Mock Report",
-      "source": "https://deerruntreadmill.com/products/deerrun-q1-urban-mini-under-desk-treadmill-with-remote-control",
+      "source": "https://www.sarthaks.com/243379/two-point-charges-q1-and-q2-are-placed-0-30-m-apart-on-the-x-axis-as-shown-in-the-figure-above",
+      "confidence": 0.9,
+      "covered_objectives": [],
+      "supporting_evidence": "# Mock Report"
+    },
+    {
+      "summary": "# Mock Report",
+      "source": "https://www.yumpu.com/en/document/view/26387872/chapter-21-211-what-must-the-distance-between-point-charge-q1-",
       "confidence": 0.9,
       "covered_objectives": [],
       "supporting_evidence": "# Mock Report"
     }
   ],
-  "confidence_score": 0.0
+  "confidence_score": 0.0,
+  "search_health": {
+    "duckduckgo": {
+      "success_rate": 1.0,
+      "timeouts": 0,
+      "errors_403": 0,
+      "errors_429": 0,
+      "captcha_count": 0,
+      "avg_latency": 1.4801700115203857
+    }
+  },
+  "follow_up_queries": []
 }

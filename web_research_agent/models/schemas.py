@@ -32,7 +32,9 @@ class ArticleSummary(BaseModel):
     summary: str
     quality_score: float = 0.0
     source_type: str = "Unknown"
+    source_tier: int = 5
     title: Optional[str] = None
+    publication_date: Optional[str] = None
 
 class Contradiction(BaseModel):
     claim_a: str
@@ -44,9 +46,12 @@ class Contradiction(BaseModel):
 class EvidenceItem(BaseModel):
     claim: str
     supporting_sources: List[str]
+    source_types: List[str] = Field(default_factory=list)
     confidence: float # 0-100
-    evidence_strength: str
-    agreement_score: float
+    evidence_strength: str # Strong, Medium, Weak
+    strength_justification: str = ""
+    agreement_score: float # 0-100
+    publication_dates: List[str] = Field(default_factory=list)
 
 class EvidenceGraph(BaseModel):
     items: List[EvidenceItem] = Field(default_factory=list)
@@ -63,8 +68,10 @@ class ConfidenceBreakdown(BaseModel):
 
 class ResearchGap(BaseModel):
     topic: str
+    reason_missing: str = ""
     suggested_queries: List[str]
-    recommended_sources: List[str]
+    recommended_authoritative_sources: List[str] = Field(default_factory=list)
+    estimated_confidence_improvement: float = 0.0
 
 class ReasoningResult(BaseModel):
     completed_objectives: List[str]
@@ -81,12 +88,23 @@ class ProfilingStats(BaseModel):
     stages: Dict[str, float] = Field(default_factory=dict)
     prompt_tokens: int = 0
     response_tokens: int = 0
+    llm_calls: int = 0
+    cache_hits: int = 0
 
 class SourceV2Info(BaseModel):
     url: str
     score: float
+    tier: int = 5
     type: str
     rejection_reason: Optional[str] = None
+
+class SearchHealth(BaseModel):
+    success_rate: float = 1.0
+    timeouts: int = 0
+    errors_403: int = 0
+    errors_429: int = 0
+    captcha_count: int = 0
+    avg_latency: float = 0.0
 
 class ResearchState(BaseModel):
     query: str
@@ -95,6 +113,7 @@ class ResearchState(BaseModel):
     urls_found: int = 0
     urls_rejected: List[SourceV2Info] = Field(default_factory=list)
     successful_downloads: int = 0
+    failed_downloads: int = 0
     successful_extractions: int = 0
     successful_summaries: int = 0
     fallback_summaries_used: int = 0
@@ -105,12 +124,13 @@ class ResearchState(BaseModel):
     objective_coverage: Dict[str, float] = Field(default_factory=dict)
     confidence_evolution: List[float] = Field(default_factory=list)
     confidence_breakdown: Optional[ConfidenceBreakdown] = None
-    follow_up_queries: List[str] = Field(default_factory=list)
     gaps: List[ResearchGap] = Field(default_factory=list)
     start_time: datetime = Field(default_factory=datetime.now)
     profiling: ProfilingStats = Field(default_factory=ProfilingStats)
     knowledge_base: List[KnowledgeBaseEntry] = Field(default_factory=list)
     confidence_score: float = 0.0
+    search_health: Dict[str, SearchHealth] = Field(default_factory=dict)
+    follow_up_queries: List[str] = Field(default_factory=list)
 
 class SelfEvaluation(BaseModel):
     overall_grade: str

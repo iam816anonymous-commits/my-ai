@@ -36,6 +36,14 @@ MAX_RETRIES = get_env_int("MAX_RETRIES", 3)
 REQUEST_TIMEOUT = get_env_int("REQUEST_TIMEOUT", 30)
 CONCURRENCY = get_env_int("CONCURRENCY", 5)
 CONFIDENCE_THRESHOLD = get_env_int("CONFIDENCE_THRESHOLD", 90)
+EVIDENCE_SATURATION_THRESHOLD = get_env_int("EVIDENCE_SATURATION_THRESHOLD", 3)
+
+# Source Weights
+WEIGHT_TIER_1 = get_env_int("WEIGHT_TIER_1", 100)
+WEIGHT_TIER_2 = get_env_int("WEIGHT_TIER_2", 85)
+WEIGHT_TIER_3 = get_env_int("WEIGHT_TIER_3", 70)
+WEIGHT_TIER_4 = get_env_int("WEIGHT_TIER_4", 50)
+WEIGHT_TIER_5 = get_env_int("WEIGHT_TIER_5", 30)
 
 # ==================================================
 # Traceability & Exports
