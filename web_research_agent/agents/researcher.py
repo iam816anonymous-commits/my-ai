@@ -6,7 +6,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn, TaskID
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 from web_research_agent.config import (
     LOGS_DIR, OUTPUT_DIR, MAX_ITERATIONS, MAX_SEARCH_RESULTS,
     CONCURRENCY, TRACE_MODE, CONFIDENCE_THRESHOLD
@@ -15,12 +15,12 @@ from web_research_agent.tools.search import search_web
 from web_research_agent.tools.browser import fetch_all
 from web_research_agent.tools.extractor import extract_all
 from web_research_agent.tools.summarizer import summarize_article
-from web_research_agent.tools.reporter import generate_final_report, export_report
+from web_research_agent.tools.reporter import generate_final_report, export_report, run_self_evaluation
 from web_research_agent.tools.planner import generate_research_plan
 from web_research_agent.tools.reasoner import evaluate_research, update_knowledge_base, calculate_explainable_confidence
 from web_research_agent.tools.trace import save_trace_artifacts
 from web_research_agent.models.llm import LLMClient
-from web_research_agent.models.schemas import ResearchState, ArticleSummary, EvidenceGraph
+from web_research_agent.models.schemas import ResearchState, ArticleSummary, EvidenceGraph, SelfEvaluation
 
 # Setup logging
 logging.basicConfig(
@@ -35,7 +35,7 @@ class ResearchAgent:
     def __init__(self):
         self.llm_client = LLMClient()
 
-    def run(self, query: str):
+    def run(self, query: str) -> Tuple[ResearchState, SelfEvaluation]:
         state = ResearchState(query=query)
         console.print(f"[bold blue]Initiating Analyst Research Platform[/bold blue]")
 
@@ -69,7 +69,7 @@ class ResearchAgent:
                 # Search
                 progress.update(task_loop, description=f"[green]{cycle_prefix}Searching...")
                 t_sub = time.time()
-                scored_results, rejected = search_web(current_queries, max_results_total=5)
+                scored_results, rejected = search_web(current_queries, max_results_total=MAX_SEARCH_RESULTS)
                 state.urls_found += (len(scored_results) + len(rejected))
                 state.urls_rejected.extend(rejected)
 
@@ -104,7 +104,7 @@ class ResearchAgent:
                     state.summaries.append(article_summary)
                     state.successful_summaries += 1
 
-                state.knowledge_base = update_knowledge_base([], iteration_summaries, state.plan) # KB logic update
+                state.knowledge_base = update_knowledge_base(state.knowledge_base, iteration_summaries, state.plan)
 
                 # Reasoning
                 progress.update(task_loop, description=f"[green]{cycle_prefix}Reasoning...")
@@ -139,6 +139,9 @@ class ResearchAgent:
                 gaps=state.gaps
             )
 
+            # 4. Quality Evaluation
+            evaluation = run_self_evaluation(final_content, state.plan, self.llm_client)
+
             # Exports
             export_report(final_content, state.plan, state.model_dump())
             progress.update(task_report, completed=100)
@@ -149,12 +152,17 @@ class ResearchAgent:
             save_trace_artifacts(state)
 
         console.print(f"[bold green]Research complete![/bold green] Report: {OUTPUT_DIR}/report.md")
-        self._display_summary(state)
+        self._display_summary(state, evaluation)
+        return state, evaluation
 
-    def _display_summary(self, state: ResearchState):
+    def _display_summary(self, state: ResearchState, evaluation: SelfEvaluation):
         runtime = datetime.now() - state.start_time
         table = Table(title="Execution Summary")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="magenta")
         table.add_row("Total Runtime", str(runtime).split('.')[0])
         table.add_row("Final Confidence", f"{state.confidence_breakdown.overall if state.confidence_breakdown else 0}/100")
+        table.add_row("Avg Coverage", f"{sum(state.objective_coverage.values())/len(state.objective_coverage):.0f}%" if state.objective_coverage else "0%")
         table.add_row("Sources Synthesized", str(len(state.summaries)))
+        table.add_row("Self Evaluation Grade", evaluation.overall_grade)
         console.print(table)

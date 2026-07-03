@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 from web_research_agent.models.llm import LLMClient
 from web_research_agent.models.schemas import (
     ReasoningResult, ArticleSummary, ResearchPlan,
-    EvidenceItem, ConfidenceBreakdown, ResearchGap
+    EvidenceItem, ConfidenceBreakdown, ResearchGap, KnowledgeBaseEntry
 )
 
 logger = logging.getLogger(__name__)
@@ -106,3 +106,19 @@ def evaluate_research(
             objective_coverage={obj: 0.0 for obj in plan.objectives},
             continue_research=False
         )
+
+def update_knowledge_base(
+    kb: List[KnowledgeBaseEntry],
+    new_summaries: List[ArticleSummary],
+    plan: ResearchPlan
+) -> List[KnowledgeBaseEntry]:
+    """Adds evidence to in-memory store."""
+    for s in new_summaries:
+        kb.append(KnowledgeBaseEntry(
+            summary=s.summary,
+            source=s.url,
+            confidence=0.9,
+            covered_objectives=[obj for obj in plan.objectives if any(k in s.summary.lower() for k in re.findall(r'\w+', obj.lower()) if len(k) > 4)],
+            supporting_evidence=s.summary[:300]
+        ))
+    return kb

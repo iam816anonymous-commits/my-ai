@@ -14,6 +14,13 @@ class QueryIntent(str, Enum):
     BUSINESS = "Business"
     GENERAL = "General"
 
+class KnowledgeBaseEntry(BaseModel):
+    summary: str
+    source: str
+    confidence: float
+    covered_objectives: List[str]
+    supporting_evidence: str
+
 class ResearchPlan(BaseModel):
     topic: str
     intent: QueryIntent
@@ -90,6 +97,7 @@ class ResearchState(BaseModel):
     successful_downloads: int = 0
     successful_extractions: int = 0
     successful_summaries: int = 0
+    fallback_summaries_used: int = 0
     sources_collected: List[str] = Field(default_factory=list)
     summaries: List[ArticleSummary] = Field(default_factory=list)
     contradictions: List[Contradiction] = Field(default_factory=list)
@@ -100,6 +108,7 @@ class ResearchState(BaseModel):
     gaps: List[ResearchGap] = Field(default_factory=list)
     start_time: datetime = Field(default_factory=datetime.now)
     profiling: ProfilingStats = Field(default_factory=ProfilingStats)
+    knowledge_base: List[KnowledgeBaseEntry] = Field(default_factory=list)
 
 class SelfEvaluation(BaseModel):
     overall_grade: str
@@ -117,3 +126,21 @@ class ResearchReport(BaseModel):
     confidence_breakdown: ConfidenceBreakdown
     references: List[str]
     further_reading: List[str]
+
+class BenchmarkMetrics(BaseModel):
+    query: str
+    category: str
+    runtime: float
+    pages_searched: int
+    successful_downloads: int
+    extraction_success: int
+    summary_success: int
+    evidence_count: int
+    citation_count: int
+    coverage: float
+    confidence: float
+    overall_quality_score: float
+    grade: str
+    memory_peak_mb: float
+    source_quality_avg: float
+    timestamp: datetime = Field(default_factory=datetime.now)

@@ -4,7 +4,7 @@ from typing import List, Dict, Optional
 from web_research_agent.models.llm import LLMClient
 from web_research_agent.models.schemas import (
     ArticleSummary, ResearchPlan, Contradiction,
-    EvidenceItem, ResearchReport, ConfidenceBreakdown, ResearchGap
+    EvidenceItem, ResearchReport, ConfidenceBreakdown, ResearchGap, SelfEvaluation
 )
 from web_research_agent.config import OUTPUT_DIR, EXPORT_FORMATS
 
@@ -103,3 +103,30 @@ def export_report(content: str, plan: ResearchPlan, state_data: Dict):
         # Note: Very crude MD to HTML conversion for demo purposes. In prod, use 'markdown' library.
         with open(OUTPUT_DIR / f"{base_name}.html", "w", encoding="utf-8") as f:
             f.write(html_wrapper)
+
+def run_self_evaluation(report_content: str, plan: ResearchPlan, llm_client: LLMClient) -> SelfEvaluation:
+    """
+    Automatically evaluates the quality of the generated report.
+    """
+    prompt = f"""
+    Analyze the following research report for quality and objectivity.
+    TOPIC: {plan.topic}
+    REPORT:
+    {report_content[:8000]}
+
+    Return JSON evaluation:
+    {{
+        "overall_grade": "A/B/C/D/F",
+        "justification": "Short reason for grade"
+    }}
+    """
+    sys_prompt = "You are an AI Quality Auditor. Be strict and objective."
+
+    try:
+        data = llm_client.get_json(prompt, sys_prompt)
+        return SelfEvaluation(**data)
+    except Exception as e:
+        logger.error(f"Self-evaluation failed: {e}")
+        return SelfEvaluation(
+            overall_grade="U", justification="Evaluation engine failed."
+        )
