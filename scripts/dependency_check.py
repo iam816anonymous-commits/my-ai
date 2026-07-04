@@ -32,7 +32,7 @@ def check_dependencies():
         print("\nPlease run: pip install -r web_research_agent/requirements.txt\n")
         return False
 
-    print("[green]All dependencies are present.[/green]")
+    print("[green]All dependencies are present and importable.[/green]")
     return True
 
 if __name__ == "__main__":

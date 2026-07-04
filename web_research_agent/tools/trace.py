@@ -43,12 +43,12 @@ def generate_research_trace(state: ResearchState) -> str:
 
     return "\n".join(trace)
 
-def save_trace_artifacts(state: ResearchState):
-    """Saves trace.md and runtime_profile.json."""
+from web_research_agent.tools.storage import storage
+
+def save_trace_artifacts(state: ResearchState, report_id: str):
+    """Saves trace.md and runtime_profile.json using StorageManager."""
     trace_md = generate_research_trace(state)
-    with open(OUTPUT_DIR / "trace.md", "w") as f:
-        f.write(trace_md)
+    storage.save_artifact(report_id, "trace", trace_md, "md")
 
     profiling_data = state.profiling.model_dump()
-    with open(OUTPUT_DIR / "runtime_profile.json", "w") as f:
-        json.dump(profiling_data, f, indent=2)
+    storage.save_artifact(report_id, "runtime", profiling_data, "json")

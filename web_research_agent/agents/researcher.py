@@ -125,7 +125,7 @@ class ResearchAgent:
             self._save_diagnostics(state, e)
             raise e
 
-        if TRACE_MODE: save_trace_artifacts(state)
+        if TRACE_MODE: save_trace_artifacts(state, state.report_id)
         self._display_summary(state, evaluation)
         return state, evaluation
 

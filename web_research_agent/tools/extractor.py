@@ -33,12 +33,15 @@ def deduplicate_text(text: str) -> str:
             unique.append(p_clean)
     return '\n\n'.join(unique)
 
+import hashlib
+
 def extract_text(html: str) -> str:
     """Professional article extraction with caching."""
     if not html: return ""
 
     # Check cache for clean text
-    content_hash = f"extract_{hash(html)}"
+    stable_hash = hashlib.sha256(html.encode('utf-8')).hexdigest()
+    content_hash = f"extract_{stable_hash}"
     cached = cache.get(content_hash)
     if cached: return cached
 
