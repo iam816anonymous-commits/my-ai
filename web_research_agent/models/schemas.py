@@ -14,6 +14,15 @@ class QueryIntent(str, Enum):
     BUSINESS = "Business"
     GENERAL = "General"
 
+class ObjectiveState(BaseModel):
+    objective: str
+    coverage: float = 0.0 # 0-100
+    evidence_count: int = 0
+    confidence: float = 0.0
+    missing_evidence: str = ""
+    search_attempts: int = 0
+    last_update_iteration: int = 0
+
 class KnowledgeBaseEntry(BaseModel):
     summary: str
     source: str
@@ -48,10 +57,11 @@ class EvidenceItem(BaseModel):
     supporting_sources: List[str]
     source_types: List[str] = Field(default_factory=list)
     confidence: float # 0-100
-    evidence_strength: str # Strong, Medium, Weak
+    evidence_strength: str # Strong, Moderate, Weak
     strength_justification: str = ""
     agreement_score: float # 0-100
     publication_dates: List[str] = Field(default_factory=list)
+    support_count: int = 0
 
 class EvidenceGraph(BaseModel):
     items: List[EvidenceItem] = Field(default_factory=list)
@@ -65,6 +75,8 @@ class ConfidenceBreakdown(BaseModel):
     extraction_quality: float
     missing_evidence_penalty: float
     contradiction_penalty: float
+    source_quality: float = 0.0
+    freshness: float = 0.0
 
 class ResearchGap(BaseModel):
     topic: str
@@ -74,11 +86,9 @@ class ResearchGap(BaseModel):
     estimated_confidence_improvement: float = 0.0
 
 class ReasoningResult(BaseModel):
-    completed_objectives: List[str]
-    missing_objectives: List[str]
+    objective_states: List[ObjectiveState] = Field(default_factory=list)
     contradictions: List[Contradiction] = Field(default_factory=list)
     confidence_breakdown: Optional[ConfidenceBreakdown] = None
-    objective_coverage: Dict[str, float]
     follow_up_queries: List[str] = Field(default_factory=list)
     continue_research: bool
     evidence_items: List[EvidenceItem] = Field(default_factory=list)
@@ -90,6 +100,8 @@ class ProfilingStats(BaseModel):
     response_tokens: int = 0
     llm_calls: int = 0
     cache_hits: int = 0
+    http_latency: float = 0.0
+    llm_latency: float = 0.0
 
 class SourceV2Info(BaseModel):
     url: str
@@ -107,6 +119,7 @@ class SearchHealth(BaseModel):
     avg_latency: float = 0.0
 
 class ResearchState(BaseModel):
+    report_id: str = ""
     query: str
     plan: Optional[ResearchPlan] = None
     iterations: int = 0
@@ -121,7 +134,7 @@ class ResearchState(BaseModel):
     summaries: List[ArticleSummary] = Field(default_factory=list)
     contradictions: List[Contradiction] = Field(default_factory=list)
     evidence_graph: EvidenceGraph = Field(default_factory=EvidenceGraph)
-    objective_coverage: Dict[str, float] = Field(default_factory=dict)
+    objective_states: Dict[str, ObjectiveState] = Field(default_factory=dict)
     confidence_evolution: List[float] = Field(default_factory=list)
     confidence_breakdown: Optional[ConfidenceBreakdown] = None
     gaps: List[ResearchGap] = Field(default_factory=list)
@@ -131,6 +144,7 @@ class ResearchState(BaseModel):
     confidence_score: float = 0.0
     search_health: Dict[str, SearchHealth] = Field(default_factory=dict)
     follow_up_queries: List[str] = Field(default_factory=list)
+    report_status: str = "not_started"
 
 class SelfEvaluation(BaseModel):
     overall_grade: str
@@ -153,6 +167,9 @@ class ResearchReport(BaseModel):
     contradictions: List[Contradiction]
     research_gaps: List[ResearchGap]
     confidence_breakdown: ConfidenceBreakdown
+    recommendations: List[str] = Field(default_factory=list)
+    practical_applications: List[str] = Field(default_factory=list)
+    decision_maker_notes: str = ""
     references: List[str]
     further_reading: List[str]
 
@@ -172,4 +189,6 @@ class BenchmarkMetrics(BaseModel):
     grade: str
     memory_peak_mb: float
     source_quality_avg: float
+    retry_rate: float = 0.0
+    llm_latency_avg: float = 0.0
     timestamp: datetime = Field(default_factory=datetime.now)

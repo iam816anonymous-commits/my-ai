@@ -3,22 +3,24 @@ import asyncio
 import aiohttp
 import io
 import pypdf
+import time
 from typing import List, Dict, Tuple, Optional
-from web_research_agent.config import REQUEST_TIMEOUT, CONCURRENCY
+from web_research_agent.config import REQUEST_TIMEOUT, MAX_RETRIES, CONCURRENCY
 from web_research_agent.tools.cache import cache
 
 logger = logging.getLogger(__name__)
 
-async def fetch_url_async(session: aiohttp.ClientSession, url: str) -> Tuple[str, str]:
-    """Downloads a single URL with caching and error handling."""
-    # Check cache first
+async def fetch_url_async(session: aiohttp.ClientSession, url: str) -> Tuple[str, str, float]:
+    """Downloads a single URL with async speed and metrics."""
     cached = cache.get(f"html_{url}")
     if cached:
-        return url, cached
+        return url, cached, 0.0
 
-    headers = {"User-Agent": "Mozilla/5.0 (Analyst Research Agent Production)"}
+    headers = {"User-Agent": "Mozilla/5.0 (Analyst Production v2)"}
+    start = time.time()
     try:
         async with session.get(url, headers=headers, timeout=REQUEST_TIMEOUT) as response:
+            latency = time.time() - start
             if response.status == 200:
                 # ArXiv HTML preference
                 if "arxiv.org/pdf/" in url:
@@ -28,7 +30,7 @@ async def fetch_url_async(session: aiohttp.ClientSession, url: str) -> Tuple[str
                             if h_resp.status == 200:
                                 text = await h_resp.text()
                                 cache.set(f"html_{url}", text)
-                                return url, text
+                                return url, text, latency
                     except: pass
 
                 content_type = response.headers.get('Content-Type', '').lower()
@@ -36,26 +38,30 @@ async def fetch_url_async(session: aiohttp.ClientSession, url: str) -> Tuple[str
                     content = await response.read()
                     text = extract_text_from_pdf(content)
                     cache.set(f"html_{url}", text)
-                    return url, text
+                    return url, text, latency
 
                 text = await response.text()
                 cache.set(f"html_{url}", text)
-                return url, text
-            return url, ""
+                return url, text, latency
+            return url, "", latency
     except Exception as e:
-        logger.warning(f"Fetch failed for {url}: {e}")
-        return url, ""
+        logger.warning(f"Async fetch failed for {url}: {e}")
+        return url, "", time.time() - start
 
-async def fetch_all_async(urls: List[str]) -> Dict[str, str]:
-    """Parallel downloads with connection pooling."""
+async def fetch_all_async(urls: List[str]) -> Tuple[Dict[str, str], float]:
+    """Parallel downloads with total latency tracking."""
     connector = aiohttp.TCPConnector(limit=CONCURRENCY)
+    total_http_latency = 0.0
     async with aiohttp.ClientSession(connector=connector) as session:
         tasks = [fetch_url_async(session, url) for url in urls]
         responses = await asyncio.gather(*tasks)
-        return {url: content for url, content in responses}
+        results = {}
+        for url, content, lat in responses:
+            results[url] = content
+            total_http_latency += lat
+        return results, total_http_latency
 
-def fetch_all(urls: List[str], max_workers: int = CONCURRENCY) -> Dict[str, str]:
-    """Synchronous wrapper for async fetch pipeline."""
+def fetch_all(urls: List[str], max_workers: int = CONCURRENCY) -> Tuple[Dict[str, str], float]:
     try:
         loop = asyncio.get_event_loop()
     except RuntimeError:
@@ -69,6 +75,4 @@ def extract_text_from_pdf(content: bytes) -> str:
         pdf_file = io.BytesIO(content)
         reader = pypdf.PdfReader(pdf_file)
         return "\n".join([p.extract_text() for p in reader.pages])
-    except Exception as e:
-        logger.error(f"PDF extract error: {e}")
-        return ""
+    except: return ""
