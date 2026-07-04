@@ -1,7 +1,9 @@
 from pydantic import BaseModel, Field, HttpUrl
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, TypeVar, Generic
 from datetime import datetime
 from enum import Enum
+
+T = TypeVar("T")
 
 class QueryIntent(str, Enum):
     BIOGRAPHY = "Biography"
@@ -13,6 +15,13 @@ class QueryIntent(str, Enum):
     HISTORY = "History"
     BUSINESS = "Business"
     GENERAL = "General"
+
+class PipelineResult(BaseModel, Generic[T]):
+    success: bool
+    payload: Optional[T] = None
+    errors: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 class ObjectiveState(BaseModel):
     objective: str
@@ -67,16 +76,18 @@ class EvidenceGraph(BaseModel):
     items: List[EvidenceItem] = Field(default_factory=list)
 
 class ConfidenceBreakdown(BaseModel):
-    overall: float
-    coverage: float
-    evidence_strength: float
-    source_diversity: float
-    agreement: float
-    extraction_quality: float
-    missing_evidence_penalty: float
-    contradiction_penalty: float
+    overall: float = 0.0
+    coverage: float = 0.0
+    evidence_strength: float = 0.0
+    source_diversity: float = 0.0
+    agreement: float = 0.0
+    extraction_quality: float = 0.0
+    missing_evidence_penalty: float = 0.0
+    contradiction_penalty: float = 0.0
     source_quality: float = 0.0
     freshness: float = 0.0
+    status: str = "Active"
+    reason: str = ""
 
 class ResearchGap(BaseModel):
     topic: str
@@ -88,7 +99,7 @@ class ResearchGap(BaseModel):
 class ReasoningResult(BaseModel):
     objective_states: List[ObjectiveState] = Field(default_factory=list)
     contradictions: List[Contradiction] = Field(default_factory=list)
-    confidence_breakdown: Optional[ConfidenceBreakdown] = None
+    confidence_breakdown: ConfidenceBreakdown = Field(default_factory=ConfidenceBreakdown)
     follow_up_queries: List[str] = Field(default_factory=list)
     continue_research: bool
     evidence_items: List[EvidenceItem] = Field(default_factory=list)
@@ -136,7 +147,7 @@ class ResearchState(BaseModel):
     evidence_graph: EvidenceGraph = Field(default_factory=EvidenceGraph)
     objective_states: Dict[str, ObjectiveState] = Field(default_factory=dict)
     confidence_evolution: List[float] = Field(default_factory=list)
-    confidence_breakdown: Optional[ConfidenceBreakdown] = None
+    confidence_breakdown: ConfidenceBreakdown = Field(default_factory=ConfidenceBreakdown)
     gaps: List[ResearchGap] = Field(default_factory=list)
     start_time: datetime = Field(default_factory=datetime.now)
     profiling: ProfilingStats = Field(default_factory=ProfilingStats)

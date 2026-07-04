@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+import requests
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -71,37 +72,48 @@ OUTPUT_DIR = BASE_DIR / "output"
 LOGS_DIR = BASE_DIR / "logs"
 CACHE_DIR = BASE_DIR / "cache"
 
-OUTPUT_DIR.mkdir(exist_ok=True)
-LOGS_DIR.mkdir(exist_ok=True)
-CACHE_DIR.mkdir(exist_ok=True)
+# ==================================================
+# Validation
+# ==================================================
 
 def validate_config():
+    """Startup validation for production readiness."""
     from rich import print as rprint
-    import requests
 
-    # 1. Python Version
+    errors = []
+
+    # 1. Environment
     if sys.version_info < (3, 10):
-        rprint("[bold red]ERROR: Python 3.10+ required.[/bold red]")
-        sys.exit(1)
+        errors.append("Python 3.10+ required.")
+
+    if not API_KEY:
+        errors.append("API_KEY missing from environment.")
 
     # 2. Dependencies
     try:
         from scripts.check_dependencies import check_dependencies
         if not check_dependencies():
-            sys.exit(1)
+            errors.append("Missing required dependencies.")
     except ImportError:
-        pass
+        errors.append("Dependency checker missing.")
 
-    # 3. API Key
-    if not API_KEY:
-        rprint("\n[bold red]ERROR: API_KEY is missing![/bold red]")
-        rprint("Please set your API_KEY in the .env file.\n")
-        sys.exit(1)
+    # 3. Paths
+    for d in [OUTPUT_DIR, LOGS_DIR, CACHE_DIR]:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            errors.append(f"Cannot create directory {d}: {e}")
 
-    # 4. Network Connectivity (Optional check)
+    # 4. Network
     try:
         requests.get("https://google.com", timeout=5)
     except:
-        rprint("[yellow]Warning: No internet connection detected. Pipeline may fail.[/yellow]")
+        rprint("[yellow]Warning: Offline mode detected. Searches will fail.[/yellow]")
 
-    rprint("[green]Configuration Validated.[/green]")
+    if errors:
+        rprint("\n[bold red]CRITICAL: Startup Validation Failed[/bold red]")
+        for err in errors:
+            rprint(f"- [red]{err}[/red]")
+        sys.exit(1)
+
+    rprint("[green]System Ready.[/green]")
