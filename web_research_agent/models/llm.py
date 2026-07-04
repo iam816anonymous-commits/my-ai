@@ -74,6 +74,9 @@ class LLMClient:
                  except: pass
 
             response = self.client.chat.completions.create(**kwargs)
+            if not response.choices or not response.choices[0].message:
+                raise LLMError("LLM returned an empty response (no choices or message content)")
+
             content = response.choices[0].message.content or ""
             r_tokens = self._estimate_tokens(content)
             self.total_response_tokens += r_tokens

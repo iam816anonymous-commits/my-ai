@@ -56,6 +56,8 @@ def evaluate_research(query: str, plan: ResearchPlan, summaries: List[ArticleSum
     """
     try:
         data = llm_client.get_json(prompt, "Senior Analyst. JSON only.")
+        if not data:
+            raise ValueError("Reasoner received empty JSON from LLM")
 
         # Merge with previous search attempt counts
         res_states = []

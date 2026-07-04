@@ -20,8 +20,6 @@ def generate_final_report(
     """Synthesizes high-fidelity analyst-grade report."""
     evidence_text = "\n".join([f"SOURCE [{i+1}]: {s.url} ({s.source_type}, Tier {s.source_tier})\n{s.summary}" for i, s in enumerate(summaries)])
 
-    # Pre-validation and automatic repair of citation mapping
-
     prompt = f"""
     TOPIC: {plan.topic} | INTENT: {plan.intent}
     SOURCES: {evidence_text[:15000]}
@@ -75,23 +73,36 @@ def validate_and_repair_report(content: str, summaries: List[ArticleSummary]) ->
 
 class DateTimeEncoder(json.JSONEncoder):
     def default(self, obj):
-        if isinstance(obj, datetime): return obj.isoformat()
+        if isinstance(obj, (datetime)):
+             return obj.isoformat()
         return super().default(obj)
 
 def export_report(content: str, plan: ResearchPlan, state_data: Dict, storage):
     rid = state_data.get("report_id", "latest")
+
+    # Prepare data for JSON export, ensuring datetime serialization
+    def serialize(obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, list):
+            return [serialize(i) for i in obj]
+        if isinstance(obj, dict):
+            return {k: serialize(v) for k, v in obj.items()}
+        return obj
+
+    clean_state = serialize(state_data)
 
     # Individual success for each export
     try: storage.save_artifact(rid, "report", content, "md")
     except Exception as e: logger.error(f"MD export fail: {e}")
 
     if "json" in EXPORT_FORMATS:
-        try: storage.save_artifact(rid, "json", state_data, "json")
+        try: storage.save_artifact(rid, "json", clean_state, "json")
         except Exception as e: logger.error(f"JSON export fail: {e}")
 
     if "html" in EXPORT_FORMATS:
         try:
-            html = f"<html><head><style>body{{font-family:sans-serif;line-height:1.6;margin:40px;}}</style></head><body>{content.replace('# ', '<h1>').replace('## ', '<h2>').replace('\\n', '<br>')}</body></html>"
+            html = f"<html><head><style>body{{font-family:sans-serif;line-height:1.6;margin:40px;}}</style></head><body>{content.replace('# ', '<h1>').replace('## ', '<h2>').replace('\n', '<br>')}</body></html>"
             storage.save_artifact(rid, "html", html, "html")
         except Exception as e: logger.error(f"HTML export fail: {e}")
 

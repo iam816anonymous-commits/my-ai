@@ -33,6 +33,9 @@ class ResearchAgent:
 
     def run(self, query: str) -> Tuple[ResearchState, SelfEvaluation]:
         state = ResearchState(query=query, report_id=storage.generate_report_id())
+        evaluation = SelfEvaluation(overall_grade="U", justification="Research not completed")
+        avg_cov = 0.0
+
         console.print(f"[bold blue]Production Research Platform[/bold blue] | ID: [magenta]{state.report_id}[/magenta]")
 
         try:
@@ -127,8 +130,24 @@ class ResearchAgent:
         return state, evaluation
 
     def _save_diagnostics(self, state, error):
-        diag = {"report_id": state.report_id, "error": str(error), "stage": state.report_status, "timings": state.profiling.stages, "iterations": state.iterations}
-        with open(OUTPUT_DIR / "pipeline_diagnostics.json", "w") as f: json.dump(diag, f, indent=2)
+        import traceback
+        diag = {
+            "report_id": state.report_id,
+            "query": state.query,
+            "error": str(error),
+            "traceback": traceback.format_exc(),
+            "stage": state.report_status,
+            "timings": state.profiling.stages,
+            "iterations": state.iterations,
+            "stats": {
+                "urls_found": state.urls_found,
+                "downloads": state.successful_downloads,
+                "extractions": state.successful_extractions,
+                "summaries": state.successful_summaries
+            }
+        }
+        with open(OUTPUT_DIR / "pipeline_diagnostics.json", "w") as f:
+            json.dump(diag, f, indent=2)
 
     def _display_summary(self, state, evaluation):
         runtime = datetime.now() - state.start_time

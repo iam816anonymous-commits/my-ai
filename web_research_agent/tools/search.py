@@ -54,6 +54,10 @@ class SearchEngineManager:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=8))
     def search(self, queries: List[str], max_results_total: int = MAX_SEARCH_RESULTS) -> Tuple[List[Dict], List[SourceV2Info], Dict[str, SearchHealth]]:
+        if isinstance(queries, str):
+            logger.warning("search() received a single string instead of a list of strings. Converting to list.")
+            queries = [queries]
+
         found = {}
         rejected = []
         seen_fingerprints = set()

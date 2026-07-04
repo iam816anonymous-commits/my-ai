@@ -1,0 +1,55 @@
+{
+  "report_id": "RPT-20260704-002",
+  "query": "What is Web3?",
+  "plan": {
+    "topic": "test",
+    "intent": "Technology",
+    "queries": [
+      "q1"
+    ],
+    "objectives": [
+      "obj1"
+    ]
+  },
+  "iterations": 1,
+  "urls_found": 0,
+  "urls_rejected": [],
+  "successful_downloads": 0,
+  "failed_downloads": 0,
+  "successful_extractions": 0,
+  "successful_summaries": 0,
+  "fallback_summaries_used": 0,
+  "sources_collected": [],
+  "summaries": [],
+  "contradictions": [],
+  "evidence_graph": {
+    "items": []
+  },
+  "objective_states": {
+    "obj1": {
+      "objective": "obj1",
+      "coverage": 0.0,
+      "evidence_count": 0,
+      "confidence": 0.0,
+      "missing_evidence": "",
+      "search_attempts": 0,
+      "last_update_iteration": 0
+    }
+  },
+  "confidence_evolution": [],
+  "confidence_breakdown": {
+    "overall": 0.0,
+    "coverage": 0.0,
+    "evidence_strength": 0.0,
+    "source_diversity": 0.0,
+    "agreement": 0.0,
+    "extraction_quality": 0.0,
+    "missing_evidence_penalty": 0.0,
+    "contradiction_penalty": 0.0,
+    "source_quality": 0.0,
+    "freshness": 0.0,
+    "status": "Active",
+    "reason": ""
+  },
+  "gaps": [],
+  "start_time":
