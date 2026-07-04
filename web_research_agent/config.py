@@ -97,14 +97,7 @@ def validate_config():
     except ImportError:
         errors.append("Dependency checker missing.")
 
-    # 3. Paths
-    for d in [OUTPUT_DIR, LOGS_DIR, CACHE_DIR]:
-        try:
-            d.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            errors.append(f"Cannot create directory {d}: {e}")
-
-    # 4. Network
+    # 3. Network
     try:
         requests.get("https://google.com", timeout=5)
     except:

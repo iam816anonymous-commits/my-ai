@@ -19,12 +19,6 @@ class StorageManager:
         self.runtime_dir = base_dir / "runtime"
         self.index_path = base_dir / "report_index.json"
 
-        self._ensure_dirs()
-
-    def _ensure_dirs(self):
-        for d in [self.reports_dir, self.traces_dir, self.html_dir, self.pdf_dir, self.json_dir, self.benchmarks_dir, self.runtime_dir]:
-            d.mkdir(parents=True, exist_ok=True)
-
     def generate_report_id(self) -> str:
         date_str = datetime.now().strftime("%Y%m%d")
         existing = list(self.reports_dir.glob(f"RPT-{date_str}-*.md"))

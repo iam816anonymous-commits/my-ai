@@ -12,14 +12,19 @@ A reasoning-driven research agent that plans, researches, and synthesizes high-q
 
 ## Installation
 
-1. Install dependencies:
+The project is designed for production readiness and handles all filesystem initialization automatically. No manual directory creation is required.
+
+1. Clone and enter the repository.
+
+2. Install dependencies:
 ```bash
 pip install -r web_research_agent/requirements.txt
 ```
 
-2. Setup environment:
+3. Setup environment:
 ```bash
 cp web_research_agent/.env.example web_research_agent/.env
+# Edit web_research_agent/.env with your API_KEY
 ```
 
 ## Environment Variables

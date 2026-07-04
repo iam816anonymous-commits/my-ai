@@ -32,7 +32,7 @@ class BenchmarkEngine:
                 duration = time.time() - start_time
 
                 # Enhanced Metrics
-                avg_cov = sum(state.objective_coverage.values()) / len(state.objective_coverage) if state.objective_coverage else 0
+                avg_cov = sum(o.coverage for o in state.objective_states.values()) / len(state.objective_states) if state.objective_states else 0
 
                 metrics = BenchmarkMetrics(
                     query=query, category=category, runtime=round(duration, 2),

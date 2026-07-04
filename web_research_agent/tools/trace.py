@@ -32,7 +32,7 @@ def generate_research_trace(state: ResearchState) -> str:
         " -> ".join([str(c) for i, c in enumerate(state.confidence_evolution)]),
         "",
         "## Final Reasoning Decisions",
-        json.dumps(state.objective_coverage, indent=2),
+        json.dumps({k: v.model_dump() for k, v in state.objective_states.items()}, indent=2),
         "",
         "## Evidence Graph Snapshot",
     ])

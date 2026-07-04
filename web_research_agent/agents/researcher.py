@@ -24,7 +24,6 @@ from web_research_agent.tools.storage import storage
 from web_research_agent.models.llm import LLMClient
 from web_research_agent.models.schemas import ResearchState, ArticleSummary, EvidenceGraph, SelfEvaluation, ObjectiveState, PipelineResult
 
-logging.basicConfig(filename=LOGS_DIR / "research.log", level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 console = Console()
 
