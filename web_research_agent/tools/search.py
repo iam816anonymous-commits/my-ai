@@ -2,7 +2,7 @@ import logging
 import re
 import time
 from typing import List, Dict, Tuple, Any
-from ddgs import DDGS
+from duckduckgo_search import DDGS
 from urllib.parse import urlparse
 from tenacity import retry, stop_after_attempt, wait_exponential
 from web_research_agent.config import (
@@ -13,7 +13,7 @@ from web_research_agent.models.schemas import SourceV2Info, SearchHealth
 
 logger = logging.getLogger(__name__)
 
-# Tier 1 (Highest)
+# Tier 1 (Highest Authority)
 TIER_1_DOMAINS = {
     "arxiv.org", "nature.com", "science.org", "ieee.org", "acm.org",
     "microsoft.com/research", "openai.com/research", "anthropic.com/research",
@@ -21,25 +21,27 @@ TIER_1_DOMAINS = {
     "w3.org", "iso.org", ".gov", ".edu"
 }
 
-# Tier 2
+# Tier 2 (Technical & Corporate Official)
 TIER_2_DOMAINS = {
     "microsoft.com", "apple.com", "google.com", "openai.com", "anthropic.com",
-    "nvidia.com", "aws.amazon.com", "github.com", "developer.", "docs."
+    "nvidia.com", "aws.amazon.com", "github.com", "developer.", "docs.",
+    "gartner.com", "forrester.com", "mckinsey.com", "hbr.org"
 }
 
-# Tier 3
+# Tier 3 (Established Media)
 TIER_3_DOMAINS = {
     "reuters.com", "apnews.com", "bbc.com", "bloomberg.com",
-    "techcrunch.com", "wired.com", "theverge.com"
+    "techcrunch.com", "wired.com", "theverge.com", "technologyreview.com"
 }
 
-# Tier 4
+# Tier 4 (Engineering Blogs)
 TIER_4_DOMAINS = {
-    "engineering.", "blog.", "netflixtechblog.com", "slack.engineering"
+    "engineering.", "blog.", "netflixtechblog.com", "slack.engineering",
+    "substack.com", "towardsdatascience.com", "medium.com/engineering"
 }
 
-def get_source_v3_info(url: str, title: str = "") -> SourceV2Info:
-    """Tier-based scoring engine V3."""
+def get_source_v4_info(url: str, title: str = "") -> SourceV2Info:
+    """Quality scoring engine V4: tiering + technical depth + freshness."""
     url_lower = url.lower()
     netloc = urlparse(url_lower).netloc
 
@@ -47,19 +49,34 @@ def get_source_v3_info(url: str, title: str = "") -> SourceV2Info:
     tier = 5
     stype = "General Web"
 
-    # Check Tiers in descending order of quality
+    # Tier classification
     if any(d in url_lower for d in TIER_1_DOMAINS):
-        score, tier, stype = float(WEIGHT_TIER_1), 1, "Academic/Official Research"
+        score, tier, stype = float(WEIGHT_TIER_1), 1, "Academic/Research"
     elif any(d in url_lower for d in TIER_2_DOMAINS):
-        score, tier, stype = float(WEIGHT_TIER_2), 2, "Official Documentation/Corp"
+        score, tier, stype = float(WEIGHT_TIER_2), 2, "Official/Corporate"
     elif any(d in url_lower for d in TIER_3_DOMAINS):
-        score, tier, stype = float(WEIGHT_TIER_3), 3, "Established News/Media"
+        score, tier, stype = float(WEIGHT_TIER_3), 3, "Press/Media"
     elif any(d in url_lower for d in TIER_4_DOMAINS):
-        score, tier, stype = float(WEIGHT_TIER_4), 4, "Engineering/Company Blog"
+        score, tier, stype = float(WEIGHT_TIER_4), 4, "Technical Blog"
 
-    # Bonuses/Penalties
-    if "arxiv.org/abs/" in url_lower: score += 2
-    if any(k in title.lower() for k in ["best-", "top-10", "review-"]): score -= 15
+    # Specific Bonuses
+    if "/research/" in url_lower or "paper" in title.lower():
+        score += 10 # Research paper bonus
+    if "docs." in netloc or "developer." in netloc:
+        score += 8 # Official documentation bonus
+    if any(k in title.lower() for k in ["whitepaper", "report", "analysis"]):
+        score += 5 # Industry report bonus
+
+    # Freshness heuristic (URL/title containing recent years)
+    current_year = time.localtime().tm_year
+    if str(current_year) in url or str(current_year) in title:
+        score += 5
+    elif str(current_year - 1) in url or str(current_year - 1) in title:
+        score += 2
+
+    # SEO/Spam penalties
+    if any(k in title.lower() for k in ["top 10", "best of", "buy now", "review"]):
+        score -= 20
 
     return SourceV2Info(url=url, score=score, tier=tier, type=stype)
 
@@ -80,7 +97,7 @@ class SearchEngineManager:
             with DDGS() as ddgs:
                 for query in queries:
                     try:
-                        results = ddgs.text(query, max_results=10)
+                        results = ddgs.text(query, max_results=15)
                         if not results: continue
 
                         for r in results:
@@ -90,14 +107,15 @@ class SearchEngineManager:
                             parsed = urlparse(url)
                             norm_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
 
-                            info = get_source_v3_info(norm_url, r.get("title", ""))
+                            info = get_source_v4_info(norm_url, r.get("title", ""))
 
-                            # Rejection
-                            if any(b in parsed.netloc.lower() for b in ["youtube.com", "facebook.com", "twitter.com", "reddit.com"]):
+                            # Rejection logic
+                            if any(b in parsed.netloc.lower() for b in ["youtube.com", "facebook.com", "twitter.com", "reddit.com", "instagram.com"]):
                                 info.rejection_reason = "Blacklisted"
                                 rejected.append(info)
                                 continue
 
+                            # Diversity logic
                             domain = parsed.netloc.lower()
                             seen_domains[domain] = seen_domains.get(domain, 0) + 1
                             if seen_domains[domain] > 2:
@@ -114,13 +132,13 @@ class SearchEngineManager:
                                     "source_type": info.type
                                 }
                     except Exception as e:
-                        logger.warning(f"Query fail: {query} - {e}")
+                        logger.warning(f"Query '{query}' failed: {e}")
                         self.health[provider].timeouts += 1
 
             self.health[provider].avg_latency = (time.time() - start_time) / len(queries)
-            self.health[provider].success_rate = 1.0 # Simple
+            self.health[provider].success_rate = 1.0
         except Exception as e:
-            logger.error(f"Search Manager fatal: {e}")
+            logger.error(f"Search fatal: {e}")
             self.health[provider].success_rate = 0.0
 
         sorted_results = sorted(found_map.values(), key=lambda x: x["score"], reverse=True)

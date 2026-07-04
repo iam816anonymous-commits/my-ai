@@ -3,24 +3,25 @@ import trafilatura
 from bs4 import BeautifulSoup
 import re
 from typing import List, Dict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from web_research_agent.config import MAX_ARTICLE_CHARS, CONCURRENCY
+from web_research_agent.tools.cache import cache
 
 logger = logging.getLogger(__name__)
 
 def clean_html(html: str) -> str:
-    """Aggressively cleans HTML."""
+    """Aggressive HTML noise reduction."""
     if not html: return ""
     soup = BeautifulSoup(html, "html.parser")
-    for tag in soup.find_all(["script", "style", "nav", "footer", "aside", "header", "form", "button", "iframe", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "figure", "figcaption", "video", "audio", "input", "label"]):
+    for tag in soup.find_all(["script", "style", "nav", "footer", "aside", "header", "form", "button", "iframe", "table", "figure", "input", "label"]):
         tag.decompose()
-    patterns = re.compile(r"infobox|sidebar|nav|menu|footer|ad-|promo|social|comment|share|metadata|reference|reflist|mw-empty-elt|citation|hatnote|stub", re.I)
+    patterns = re.compile(r"infobox|sidebar|nav|menu|footer|ad-|promo|social|comment|share|metadata|reference|reflist|mw-empty-elt|citation", re.I)
     for el in soup.find_all(attrs={"class": patterns}): el.decompose()
     for el in soup.find_all(attrs={"id": patterns}): el.decompose()
     return str(soup)
 
 def deduplicate_text(text: str) -> str:
-    """Removes duplicate paragraphs."""
+    """Similarity-based paragraph deduplication."""
     paragraphs = text.split('\n\n')
     seen, unique = set(), []
     for p in paragraphs:
@@ -33,10 +34,19 @@ def deduplicate_text(text: str) -> str:
     return '\n\n'.join(unique)
 
 def extract_text(html: str) -> str:
-    """Extracts article text."""
+    """Professional article extraction with caching."""
     if not html: return ""
-    # Speed optimization: check if already plain text (from PDF extract)
-    if not html.strip().startswith("<"): return html[:MAX_ARTICLE_CHARS]
+
+    # Check cache for clean text
+    content_hash = f"extract_{hash(html)}"
+    cached = cache.get(content_hash)
+    if cached: return cached
+
+    # If it's already plain text (from PDF)
+    if not html.strip().startswith("<"):
+        text = html[:MAX_ARTICLE_CHARS]
+        cache.set(content_hash, text)
+        return text
 
     try:
         cleaned = clean_html(html)
@@ -44,14 +54,16 @@ def extract_text(html: str) -> str:
         if not extracted or len(extracted) < 150:
             soup = BeautifulSoup(cleaned, "html.parser")
             extracted = soup.get_text(separator="\n")
-        clean_text = deduplicate_text(extracted)
-        return clean_text[:MAX_ARTICLE_CHARS]
+
+        clean_text = deduplicate_text(extracted)[:MAX_ARTICLE_CHARS]
+        cache.set(content_hash, clean_text)
+        return clean_text
     except Exception as e:
-        logger.error(f"Extraction error: {e}")
+        logger.error(f"Extract fail: {e}")
         return ""
 
 def extract_all(html_contents: Dict[str, str]) -> Dict[str, str]:
-    """Parallel extraction."""
+    """Parallel extraction using ProcessPoolExecutor for CPU-bound cleaning."""
     results = {}
     with ThreadPoolExecutor(max_workers=CONCURRENCY) as executor:
         future_to_url = {executor.submit(extract_text, html): url for url, html in html_contents.items()}

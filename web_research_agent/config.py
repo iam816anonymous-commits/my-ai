@@ -1,5 +1,6 @@
 import os
 import sys
+import logging
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -68,13 +69,39 @@ X_TITLE = os.getenv("X_TITLE", "Web Research Agent")
 # ==================================================
 OUTPUT_DIR = BASE_DIR / "output"
 LOGS_DIR = BASE_DIR / "logs"
+CACHE_DIR = BASE_DIR / "cache"
 
 OUTPUT_DIR.mkdir(exist_ok=True)
 LOGS_DIR.mkdir(exist_ok=True)
+CACHE_DIR.mkdir(exist_ok=True)
 
 def validate_config():
     from rich import print as rprint
+    import requests
+
+    # 1. Python Version
+    if sys.version_info < (3, 10):
+        rprint("[bold red]ERROR: Python 3.10+ required.[/bold red]")
+        sys.exit(1)
+
+    # 2. Dependencies
+    try:
+        from scripts.check_dependencies import check_dependencies
+        if not check_dependencies():
+            sys.exit(1)
+    except ImportError:
+        pass
+
+    # 3. API Key
     if not API_KEY:
         rprint("\n[bold red]ERROR: API_KEY is missing![/bold red]")
         rprint("Please set your API_KEY in the .env file.\n")
         sys.exit(1)
+
+    # 4. Network Connectivity (Optional check)
+    try:
+        requests.get("https://google.com", timeout=5)
+    except:
+        rprint("[yellow]Warning: No internet connection detected. Pipeline may fail.[/yellow]")
+
+    rprint("[green]Configuration Validated.[/green]")

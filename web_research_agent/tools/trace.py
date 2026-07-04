@@ -44,11 +44,11 @@ def generate_research_trace(state: ResearchState) -> str:
     return "\n".join(trace)
 
 def save_trace_artifacts(state: ResearchState):
-    """Saves trace.md and profiling.json."""
+    """Saves trace.md and runtime_profile.json."""
     trace_md = generate_research_trace(state)
     with open(OUTPUT_DIR / "trace.md", "w") as f:
         f.write(trace_md)
 
     profiling_data = state.profiling.model_dump()
-    with open(OUTPUT_DIR / "profiling.json", "w") as f:
+    with open(OUTPUT_DIR / "runtime_profile.json", "w") as f:
         json.dump(profiling_data, f, indent=2)
