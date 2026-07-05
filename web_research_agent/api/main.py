@@ -107,13 +107,17 @@ async def websocket_research(websocket: WebSocket):
                     loop.call_soon_threadsafe(queue.put_nowait, None) # Sentinel
 
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, run_agent)
+            # Start agent in background thread
+            agent_task = loop.run_in_executor(None, run_agent)
 
+            # Process queue as events come in (streaming)
             while True:
                 msg = await queue.get()
                 if msg is None: break
                 await websocket.send_text(msg)
 
+            # Wait for thread completion
+            await agent_task
             await websocket.send_text(json.dumps({"event": "complete"}))
 
     except WebSocketDisconnect:

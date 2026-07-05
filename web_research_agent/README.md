@@ -77,7 +77,20 @@ python web_research_agent/main.py "Your research query"
 
 ## Running the Project
 
+### Full Web Platform (Recommended)
+This starts both the React frontend and the FastAPI backend.
+```bash
+./run_platform.sh
+```
+Then visit `http://localhost:5173` in your browser.
+
+### CLI Only
 ```bash
 export PYTHONPATH=$PYTHONPATH:.
 python web_research_agent/main.py "Topic to research"
 ```
+
+## Advanced Features
+- **Real-time Monitoring**: The Web UI uses WebSockets to show agent reasoning steps live.
+- **Report Library**: Previous reports are automatically indexed and can be viewed via the "Previous Reports" sidebar.
+- **Traceability**: Detailed execution logs and reasoning traces are saved in `output/traces/`.

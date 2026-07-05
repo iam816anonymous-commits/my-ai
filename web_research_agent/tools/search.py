@@ -2,7 +2,7 @@ import logging
 import re
 import time
 from typing import List, Dict, Tuple, Any, Set
-from ddgs import DDGS
+from duckduckgo_search import DDGS
 from urllib.parse import urlparse, urlunparse
 from tenacity import retry, stop_after_attempt, wait_exponential
 from web_research_agent.config import (

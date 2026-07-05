@@ -38,7 +38,8 @@ class ResearchAgent:
     def _emit(self, event_type: str, state: ResearchState):
         if self.on_progress:
             try:
-                self.on_progress(event_type, state.model_dump())
+                # Use json mode for WebSocket compatibility (Enums, Datetimes)
+                self.on_progress(event_type, state.model_dump(mode='json'))
             except Exception as e:
                 logger.error(f"Progress callback error: {e}")
 
