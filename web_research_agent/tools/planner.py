@@ -16,7 +16,7 @@ def generate_research_plan(query: str, llm_client: LLMClient) -> ResearchPlan:
 
     1. Determine the intent: Biography, Technology, Programming, Finance, Medical, Cybersecurity, History, Business, or General.
     2. Generate 6-10 specific research objectives tailored to this intent.
-    3. Generate 6-10 high-precision search queries.
+    3. Generate 6-10 high-precision search queries. Prioritize academic sources, official docs, and primary evidence.
 
     Return JSON:
     {{

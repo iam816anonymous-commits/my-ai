@@ -119,8 +119,22 @@ def export_report(content: str, plan: ResearchPlan, state_data: Dict, storage):
         except Exception as e: logger.error(f"HTML export fail: {e}")
 
 def run_self_evaluation(report: str, plan: ResearchPlan, llm_client: LLMClient) -> SelfEvaluation:
-    prompt = f"Topic: {plan.topic}\nReport: {report[:8000]}\nJSON evaluation: overall_grade, justification, coverage_score, evidence_score, readability_score."
+    prompt = f"Topic: {plan.topic}\nReport: {report[:10000]}\nJSON evaluation: overall_grade, justification, coverage_score, evidence_score, readability_score."
     try:
         return SelfEvaluation(**llm_client.get_json(prompt, "Analyst Auditor."))
     except:
         return SelfEvaluation(overall_grade="U", justification="Audit fail.")
+
+def validate_objective_completeness(report: str, objectives: List[str], llm_client: LLMClient) -> Dict[str, str]:
+    """Autonomous validator: Can each objective be answered based on the report?"""
+    prompt = f"""
+    REPORT: {report[:10000]}
+    OBJECTIVES: {objectives}
+
+    TASK: Determine if each objective is fully answered.
+    Return JSON: {{ "objective_name": "YES/PARTIAL/NO" }}
+    """
+    try:
+        return llm_client.get_json(prompt, "Objective Completeness Validator.")
+    except:
+        return {o: "UNKNOWN" for o in objectives}

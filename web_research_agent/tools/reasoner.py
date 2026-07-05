@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 from web_research_agent.models.llm import LLMClient
 from web_research_agent.models.schemas import (
     ReasoningResult, ArticleSummary, ResearchPlan,
-    KnowledgeBaseEntry, EvidenceItem, ConfidenceBreakdown, ResearchGap, ObjectiveState
+    KnowledgeBaseEntry, EvidenceItem, ConfidenceBreakdown, ResearchGap, ObjectiveState, ObjectiveStatus
 )
 
 logger = logging.getLogger(__name__)
@@ -68,20 +68,37 @@ def calculate_explainable_confidence(state_data: Dict) -> ConfidenceBreakdown:
     )
 
 def evaluate_research(query: str, plan: ResearchPlan, summaries: List[ArticleSummary], llm_client: LLMClient, current_iteration: int, urls_found: int = 0, previous_states: Dict[str, ObjectiveState] = None) -> ReasoningResult:
-    """Rigorous analyst-grade evidence review."""
-    evidence_snapshot = "\n".join([f"SOURCE [{i}]: {s.url} ({s.source_type}, Tier {s.source_tier})\nSUMMARY: {s.summary[:400]}" for i, s in enumerate(summaries)])
+    """Autonomous adaptive reasoning engine."""
+    evidence_snapshot = "\n".join([f"SOURCE [{i}]: {s.url} ({s.source_type}, Tier {s.source_tier})\nSUMMARY: {s.summary[:600]}" for i, s in enumerate(summaries)])
+
+    # Track existing state for prompt context
+    state_desc = "\n".join([f"- {o}: {s.status} (Cov: {s.coverage}%, Sources: {s.number_of_sources})" for o, s in (previous_states or {}).items()])
 
     prompt = f"""
     TOPIC: {plan.topic} | OBJECTIVES: {plan.objectives}
-    EVIDENCE: {evidence_snapshot[:15000]}
+    PREVIOUS STATE:
+    {state_desc}
 
-    TASK: Critical Evidence Review.
-    1. Update state for EVERY objective. Coverage must reflect evidence quality and diversity, not just keyword matches.
-    2. Build Evidence Graph. Every claim must list supporting AND contradicting sources.
-    3. Detect Gaps: If an objective has weak coverage, generate HIGHLY TARGETED queries for that specific gap.
+    EVIDENCE: {evidence_snapshot[:20000]}
+
+    TASK: Autonomous Analysis & State Machine Update.
+    1. Update state machine for EVERY objective: NOT_STARTED, SEARCHING, FETCHING, SUMMARIZING, EVIDENCE_FOUND, VALIDATING, COMPLETE, FAILED, INSUFFICIENT_EVIDENCE.
+    2. Calculate Coverage (0-100%): evidence count, independent domains, claim density, source quality.
+    3. Require Source Diversity: 1 source is NEVER 'COMPLETE'. Need multiple independent confirmations.
+    4. Detect Gaps: Generate progressively specific queries targeting missing technical details/academic proof.
 
     JSON: {{
-        "objective_states": [{{ "objective": "", "coverage": 0-100, "evidence_count": 0, "confidence": 0-100, "missing_evidence": "" }}],
+        "objective_states": [{{
+            "objective": "",
+            "status": "STATUS_ENUM",
+            "coverage": 0-100,
+            "evidence_count": 0,
+            "confidence": 0-100,
+            "number_of_sources": 0,
+            "source_diversity": 0.0-1.0,
+            "contradictions_count": 0,
+            "missing_evidence": ""
+        }}],
         "contradictions": [{{ "claim_a": "", "claim_b": "", "source_a": "", "source_b": "", "explanation": "" }}],
         "evidence_items": [{{
             "claim": "",
@@ -116,14 +133,33 @@ def evaluate_research(query: str, plan: ResearchPlan, summaries: List[ArticleSum
             cov = obj_data.get("coverage", 0.0)
             if 0 < cov < 1: cov *= 100
 
-            # Increment attempts if coverage didn't increase significantly
+            # Smart status transition logic (if LLM didn't provide a valid one)
+            status_str = obj_data.get("status", "SEARCHING").upper()
+            try:
+                status = ObjectiveStatus[status_str]
+            except KeyError:
+                status = ObjectiveStatus.SEARCHING
+
+            # Evidence saturation check
+            improvement = cov - (prev.coverage if prev else 0.0)
+            is_saturated = improvement < 2.0 and (prev.search_attempts if prev else 0) > 1
+
+            if status == ObjectiveStatus.COMPLETE and improvement < 0:
+                # Regression prevention
+                cov = prev.coverage if prev else cov
+
+            # Increment attempts
             attempts = (prev.search_attempts if prev else 0) + 1
 
             res_states.append(ObjectiveState(
                 objective=obj_name,
+                status=status,
                 coverage=min(max(cov, 0.0), 100.0),
                 evidence_count=obj_data.get("evidence_count", 0),
                 confidence=obj_data.get("confidence", 0.0),
+                number_of_sources=obj_data.get("number_of_sources", 0),
+                source_diversity=obj_data.get("source_diversity", 0.0),
+                contradictions_count=obj_data.get("contradictions_count", 0),
                 missing_evidence=obj_data.get("missing_evidence", ""),
                 search_attempts=attempts,
                 last_update_iteration=current_iteration
@@ -138,9 +174,14 @@ def evaluate_research(query: str, plan: ResearchPlan, summaries: List[ArticleSum
             "urls_found": urls_found
         })
 
-        # Smart termination: Stop if all critical objectives are met OR no new info in follow_up
-        if not data.get("follow_up_queries"):
+        # Smart termination: Stop if all objectives are complete OR saturated
+        all_complete = all(o.status == ObjectiveStatus.COMPLETE or o.coverage >= 85 for o in res_states)
+        all_saturated = all(o.search_attempts >= 3 for o in res_states) # Max 3 attempts per objective
+
+        if not data.get("follow_up_queries") or all_complete or all_saturated:
              data["continue_research"] = False
+        else:
+             data["continue_research"] = True
 
         return ReasoningResult(**data)
     except Exception as e:

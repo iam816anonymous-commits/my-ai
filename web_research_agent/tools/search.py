@@ -13,10 +13,18 @@ from web_research_agent.models.schemas import SourceV2Info, SearchHealth
 
 logger = logging.getLogger(__name__)
 
-# Authoritative Tiers V5
-TIER_1 = {"arxiv.org", "nature.com", "science.org", "ieee.org", "acm.org", "mit.edu", "stanford.edu", "harvard.edu", ".gov", "w3.org", "iso.org"}
-TIER_2 = {"microsoft.com", "google.com", "openai.com", "anthropic.com", "nvidia.com", "github.com", "docs.", "developer.", "gartner.com", "mckinsey.com"}
-TIER_3 = {"reuters.com", "apnews.com", "bbc.com", "bloomberg.com", "techcrunch.com", "wired.com"}
+# Authoritative Tiers V6
+TIER_1 = {
+    "arxiv.org", "nature.com", "science.org", "ieee.org", "acm.org", "mit.edu", "stanford.edu", "harvard.edu", ".gov", "w3.org", "iso.org",
+    "scholar.google.com", "semanticscholar.org", "ncbi.nlm.nih.gov", "ssrn.com", "sec.gov", "bls.gov"
+}
+TIER_2 = {
+    "microsoft.com", "google.com", "openai.com", "anthropic.com", "nvidia.com", "github.com", "docs.", "developer.", "gartner.com", "mckinsey.com",
+    "reuters.com", "apnews.com", "bloomberg.com", "ft.com", "wsj.com", "economist.com"
+}
+TIER_3 = {
+    "bbc.com", "techcrunch.com", "wired.com", "verge.com", "infoworld.com", "zdnet.com", "eweek.com"
+}
 
 def canonicalize_url(url: str) -> str:
     """Standardizes URL to prevent duplicates (remove fragments, trailing slashes)."""
@@ -82,11 +90,19 @@ class SearchEngineManager:
         provider = "duckduckgo"
         start = time.time()
 
+        # Cascading search strategy: if we have few high-tier results, try adding targeted qualifiers
+        tier_augmented_queries = []
+        for q in queries:
+            tier_augmented_queries.append(q)
+            if "research" not in q.lower() and "official" not in q.lower():
+                tier_augmented_queries.append(f"{q} site:gov OR site:edu")
+                tier_augmented_queries.append(f"{q} whitepaper OR documentation")
+
         try:
             with DDGS() as ddgs:
-                for q in queries:
+                for q in tier_augmented_queries:
                     try:
-                        results = ddgs.text(q, max_results=15)
+                        results = ddgs.text(q, max_results=20)
                         if not results: continue
                         for r in results:
                             url = r.get("href")

@@ -16,6 +16,17 @@ class QueryIntent(str, Enum):
     BUSINESS = "Business"
     GENERAL = "General"
 
+class ObjectiveStatus(str, Enum):
+    NOT_STARTED = "NOT_STARTED"
+    SEARCHING = "SEARCHING"
+    FETCHING = "FETCHING"
+    SUMMARIZING = "SUMMARIZING"
+    EVIDENCE_FOUND = "EVIDENCE_FOUND"
+    VALIDATING = "VALIDATING"
+    COMPLETE = "COMPLETE"
+    FAILED = "FAILED"
+    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+
 class PipelineResult(BaseModel, Generic[T]):
     success: bool
     payload: Optional[T] = None
@@ -25,11 +36,15 @@ class PipelineResult(BaseModel, Generic[T]):
 
 class ObjectiveState(BaseModel):
     objective: str
+    status: ObjectiveStatus = ObjectiveStatus.NOT_STARTED
     coverage: float = 0.0 # 0-100
     evidence_count: int = 0
     confidence: float = 0.0
     missing_evidence: str = ""
     search_attempts: int = 0
+    number_of_sources: int = 0
+    source_diversity: float = 0.0
+    contradictions_count: int = 0
     last_update_iteration: int = 0
 
 class KnowledgeBaseEntry(BaseModel):
@@ -144,6 +159,8 @@ class ResearchState(BaseModel):
     iterations: int = 0
     urls_found: int = 0
     urls_rejected: List[SourceV2Info] = Field(default_factory=list)
+    visited_urls: List[str] = Field(default_factory=list)
+    failed_fetches: List[str] = Field(default_factory=list)
     successful_downloads: int = 0
     failed_downloads: int = 0
     successful_extractions: int = 0

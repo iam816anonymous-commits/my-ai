@@ -10,17 +10,25 @@ from web_research_agent.tools.cache import cache
 
 logger = logging.getLogger(__name__)
 
-async def fetch_url_async(session: aiohttp.ClientSession, url: str) -> Tuple[str, str, float]:
-    """Downloads a single URL with async speed and metrics."""
+async def fetch_url_async(session: aiohttp.ClientSession, url: str, attempt: int = 1) -> Tuple[str, str, float]:
+    """Downloads a single URL with async speed, metrics, and robust retries."""
     cached = cache.get(f"html_{url}")
     if cached:
         return url, cached, 0.0
 
-    headers = {"User-Agent": "Mozilla/5.0 (Analyst Production v2)"}
+    headers = {"User-Agent": "Mozilla/5.0 (Analyst Autonomous Research Platform v1)"}
     start = time.time()
     try:
         async with session.get(url, headers=headers, timeout=REQUEST_TIMEOUT) as response:
             latency = time.time() - start
+
+            # Robust Retry Logic (429, 503, 504)
+            if response.status in [429, 503, 504] and attempt <= 2:
+                wait = (attempt ** 2) * 5
+                logger.warning(f"Rate limited/Server error ({response.status}) for {url}. Waiting {wait}s...")
+                await asyncio.sleep(wait)
+                return await fetch_url_async(session, url, attempt + 1)
+
             if response.status == 200:
                 # ArXiv HTML preference
                 if "arxiv.org/pdf/" in url:

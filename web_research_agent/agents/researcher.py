@@ -16,13 +16,13 @@ from web_research_agent.tools.search import search_web
 from web_research_agent.tools.browser import fetch_all
 from web_research_agent.tools.extractor import extract_all
 from web_research_agent.tools.summarizer import summarize_article
-from web_research_agent.tools.reporter import generate_final_report, export_report, run_self_evaluation
+from web_research_agent.tools.reporter import generate_final_report, export_report, run_self_evaluation, validate_objective_completeness
 from web_research_agent.tools.planner import generate_research_plan
 from web_research_agent.tools.reasoner import evaluate_research, update_knowledge_base, calculate_explainable_confidence
 from web_research_agent.tools.trace import save_trace_artifacts
 from web_research_agent.tools.storage import storage
 from web_research_agent.models.llm import LLMClient
-from web_research_agent.models.schemas import ResearchState, ArticleSummary, EvidenceGraph, SelfEvaluation, ObjectiveState, PipelineResult
+from web_research_agent.models.schemas import ResearchState, ArticleSummary, EvidenceGraph, SelfEvaluation, ObjectiveState, ObjectiveStatus, PipelineResult
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -61,23 +61,36 @@ class ResearchAgent:
                 state.profiling.stages["planning"] = progress.tasks[t_plan].elapsed or 0.0
                 self._emit("planning_complete", state)
 
-                # 2. Research Loop
-                t_loop = progress.add_task("[green]Evidence Cycles", total=MAX_ITERATIONS)
+                # 2. Research Loop (Adaptive Autonomous Execution)
+                t_loop = progress.add_task("[green]Adaptive Cycles", total=MAX_ITERATIONS)
                 while state.iterations < MAX_ITERATIONS:
                     state.iterations += 1
+
+                    # Live Research Dashboard Stats
+                    active_obj = [o for o in state.objective_states.values() if o.status != ObjectiveStatus.COMPLETE]
+                    completed_count = len(state.objective_states) - len(active_obj)
+
+                    self._emit("iteration_start", state)
                     curr_queries = state.plan.queries if state.iterations == 1 else state.follow_up_queries
                     if not curr_queries: break
 
-                    # Search
+                    # Search (Avoid redundant queries)
                     progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Searching...")
                     self._emit("search_start", state)
+
+                    # Filter out queries we've tried too many times
+                    fresh_queries = [q for q in curr_queries if q not in state.follow_up_queries or state.iterations < 2]
+                    if not fresh_queries: fresh_queries = curr_queries[:2]
+
                     start_search = time.time()
-                    scored, rejected, health = search_web(curr_queries, MAX_SEARCH_RESULTS)
+                    scored, rejected, health = search_web(fresh_queries, MAX_SEARCH_RESULTS)
                     state.search_health.update(health)
                     state.urls_found += (len(scored) + len(rejected))
                     state.urls_rejected.extend(rejected)
-                    new_urls = [s["url"] for s in scored if s["url"] not in state.sources_collected]
-                    state.sources_collected.extend(new_urls)
+
+                    # Memory: Avoid revisiting URLs
+                    new_urls = [s["url"] for s in scored if s["url"] not in state.visited_urls and s["url"] not in state.failed_fetches]
+                    state.sources_collected.extend([u for u in new_urls if u not in state.sources_collected])
                     state.profiling.stages[f"search_iter_{state.iterations}"] = time.time() - start_search
                     self._emit("search_complete", state)
 
@@ -100,8 +113,15 @@ class ResearchAgent:
                     start_fetch = time.time()
                     html_map, latency = fetch_all(new_urls, CONCURRENCY)
                     state.profiling.http_latency += latency
-                    state.successful_downloads += sum(1 for h in html_map.values() if h)
-                    state.failed_downloads += sum(1 for h in html_map.values() if not h)
+
+                    # Update Memory
+                    for url, html in html_map.items():
+                        if html:
+                            state.visited_urls.append(url)
+                            state.successful_downloads += 1
+                        else:
+                            state.failed_fetches.append(url)
+                            state.failed_downloads += 1
 
                     texts_map = extract_all({u: h for u, h in html_map.items() if h})
                     valid_texts = {u: t for u, t in texts_map.items() if t}
@@ -135,10 +155,12 @@ class ResearchAgent:
                     state.knowledge_base = update_knowledge_base(state.knowledge_base, iteration_summaries, state.plan)
 
                     # Reasoning
-                    progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Evaluating...")
+                    progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Evaluating Evidence...")
                     self._emit("reasoning_start", state)
                     start_reason = time.time()
                     res = evaluate_research(query, state.plan, state.summaries, self.llm_client, state.iterations, state.urls_found, state.objective_states)
+
+                    # Update State Machine
                     for os in res.objective_states:
                         state.objective_states[os.objective] = os
                     state.contradictions.extend(res.contradictions)
@@ -152,20 +174,29 @@ class ResearchAgent:
 
                     progress.update(t_loop, advance=1)
                     avg_cov = sum(o.coverage for o in state.objective_states.values()) / len(state.objective_states)
-                    tier1_count = sum(1 for s in state.summaries if s.source_tier == 1)
 
-                    # Adaptive Stopping Decision
-                    if avg_cov >= 85 and state.confidence_breakdown.overall >= 85:
-                        logger.info(f"Adaptive stop: High coverage ({avg_cov:.1f}%) and confidence ({state.confidence_breakdown.overall:.1f}%) achieved.")
+                    # Autonomous Stopping Decision (Final Decision Step)
+                    if not res.continue_research:
+                        logger.info(f"Autonomous termination: Agent decided research objectives are satisfied.")
                         break
-                    if tier1_count >= EVIDENCE_SATURATION_THRESHOLD:
-                        logger.info(f"Adaptive stop: Evidence saturation reached ({tier1_count} Tier 1 sources).")
+
+                    # Fallback stopping logic (Resource exhaustion)
+                    if state.iterations >= MAX_ITERATIONS:
+                        logger.warning("Terminating research: Maximum cycles reached.")
                         break
 
                 # Synthesis
                 t_report = progress.add_task("[cyan]Synthesis...", total=100)
                 self._emit("synthesis_start", state)
                 final_content = generate_final_report(state.summaries, state.plan, self.llm_client, state.evidence_graph.items, state.contradictions, state.confidence_breakdown, state.gaps)
+
+                # Validation
+                progress.update(t_report, description="[cyan]Validating Completeness...")
+                completeness = validate_objective_completeness(final_content, state.plan.objectives, self.llm_client)
+                for obj, status in completeness.items():
+                    if status == "NO" and state.objective_states[obj].status == ObjectiveStatus.COMPLETE:
+                         state.objective_states[obj].status = ObjectiveStatus.INSUFFICIENT_EVIDENCE
+
                 evaluation = run_self_evaluation(final_content, state.plan, self.llm_client)
                 export_report(final_content, state.plan, state.model_dump(), storage)
                 storage.update_index({"id": state.report_id, "query": query, "created_at": datetime.now().isoformat(), "confidence": state.confidence_breakdown.overall, "coverage": round(avg_cov, 1), "grade": evaluation.overall_grade, "runtime": str(datetime.now() - state.start_time).split('.')[0], "report": f"reports/{state.report_id}.md", "trace": f"traces/{state.report_id}.md"})
@@ -209,10 +240,39 @@ class ResearchAgent:
     def _display_summary(self, state, evaluation):
         runtime = datetime.now() - state.start_time
         process = psutil.Process(os.getpid())
-        table = Table(title="Execution Profile", box=None)
-        table.add_column("Metric", style="dim"); table.add_column("Value")
-        table.add_row("Runtime", str(runtime).split('.')[0])
+
+        # Dashboard Table
+        table = Table(title="[bold blue]Autonomous Research Dashboard[/bold blue]", box=None)
+        table.add_column("Dimension", style="dim")
+        table.add_column("Value")
+
+        avg_cov = sum(o.coverage for o in state.objective_states.values()) / len(state.objective_states)
+        table.add_row("Overall Coverage", f"{avg_cov:.1f}%")
         table.add_row("Confidence", f"{state.confidence_breakdown.overall:.1f}/100")
+        table.add_row("Evidence Items", f"{len(state.evidence_graph.items)}")
+        table.add_row("Sources Collected", f"{len(state.summaries)}")
         table.add_row("Grade", f"[bold yellow]{evaluation.overall_grade}[/bold yellow]")
+        table.add_row("Runtime", str(runtime).split('.')[0])
         table.add_row("Peak RAM", f"{process.memory_info().rss / (1024 * 1024):.1f} MB")
+
+        console.print("\n")
         console.print(table)
+
+        # Objective Status Machine View
+        obj_table = Table(title="[bold cyan]Objective State Machine[/bold cyan]", box=None)
+        obj_table.add_column("Objective", width=40)
+        obj_table.add_column("Status")
+        obj_table.add_column("Cov %")
+        obj_table.add_column("Sources")
+
+        for obj_name, obj in state.objective_states.items():
+            status_style = "green" if obj.status == ObjectiveStatus.COMPLETE else "yellow" if obj.status == ObjectiveStatus.SEARCHING else "red"
+            obj_table.add_row(
+                obj_name,
+                f"[{status_style}]{obj.status.value}[/{status_style}]",
+                f"{obj.coverage:.0f}%",
+                str(obj.number_of_sources)
+            )
+
+        console.print("\n")
+        console.print(obj_table)
