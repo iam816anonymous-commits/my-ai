@@ -64,6 +64,7 @@ class Contradiction(BaseModel):
 class EvidenceItem(BaseModel):
     claim: str
     supporting_sources: List[str]
+    contradicting_sources: List[str] = Field(default_factory=list)
     source_types: List[str] = Field(default_factory=list)
     confidence: float # 0-100
     evidence_strength: str # Strong, Moderate, Weak
@@ -71,6 +72,8 @@ class EvidenceItem(BaseModel):
     agreement_score: float # 0-100
     publication_dates: List[str] = Field(default_factory=list)
     support_count: int = 0
+    confirmation_count: int = 0
+    primary_evidence: bool = False
 
 class EvidenceGraph(BaseModel):
     items: List[EvidenceItem] = Field(default_factory=list)
@@ -86,6 +89,8 @@ class ConfidenceBreakdown(BaseModel):
     contradiction_penalty: float = 0.0
     source_quality: float = 0.0
     freshness: float = 0.0
+    search_exhaustiveness: float = 0.0
+    explanation: str = ""
     status: str = "Active"
     reason: str = ""
 
@@ -108,11 +113,14 @@ class ReasoningResult(BaseModel):
 class ProfilingStats(BaseModel):
     stages: Dict[str, float] = Field(default_factory=dict)
     prompt_tokens: int = 0
-    response_tokens: int = 0
+    completion_tokens: int = 0
     llm_calls: int = 0
     cache_hits: int = 0
+    retry_count: int = 0
     http_latency: float = 0.0
     llm_latency: float = 0.0
+    estimated_cost_usd: float = 0.0
+    provider_failures: int = 0
 
 class SourceV2Info(BaseModel):
     url: str

@@ -21,8 +21,14 @@ class StorageManager:
 
     def generate_report_id(self) -> str:
         date_str = datetime.now().strftime("%Y%m%d")
+        self.reports_dir.mkdir(parents=True, exist_ok=True)
         existing = list(self.reports_dir.glob(f"RPT-{date_str}-*.md"))
-        next_num = len(existing) + 1
+        # Extract numbers to find true max and avoid collisions if files deleted
+        nums = []
+        for p in existing:
+            try: nums.append(int(p.stem.split("-")[-1]))
+            except: pass
+        next_num = (max(nums) if nums else 0) + 1
         return f"RPT-{date_str}-{next_num:03d}"
 
     def save_artifact(self, report_id: str, artifact_type: str, content: Any, extension: str):

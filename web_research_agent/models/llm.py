@@ -31,10 +31,15 @@ class LLMClient:
         )
         self.model = MODEL_NAME
         self.total_prompt_tokens = 0
-        self.total_response_tokens = 0
+        self.total_completion_tokens = 0
+        self.total_cost_usd = 0.0
 
     def _estimate_tokens(self, text: str) -> int:
         return len(text) // 4
+
+    def _calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
+        # Generic pricing: $0.15 / 1M prompt, $0.60 / 1M completion (similar to GPT-4o-mini)
+        return (prompt_tokens * 0.15 / 1_000_000) + (completion_tokens * 0.60 / 1_000_000)
 
     def _parse_json_robustly(self, text: str) -> Dict[str, Any]:
         try: return json.loads(text)
@@ -57,8 +62,6 @@ class LLMClient:
     )
     def call(self, prompt: str, system_prompt: str = "Assistant", response_format: Optional[str] = None) -> str:
         start_time = time.time()
-        p_tokens = self._estimate_tokens(prompt + system_prompt)
-        self.total_prompt_tokens += p_tokens
 
         try:
             kwargs = {
@@ -78,11 +81,22 @@ class LLMClient:
                 raise LLMError("LLM returned an empty response (no choices or message content)")
 
             content = response.choices[0].message.content or ""
-            r_tokens = self._estimate_tokens(content)
-            self.total_response_tokens += r_tokens
+
+            # Use actual usage if available, else estimate
+            if hasattr(response, 'usage') and response.usage:
+                p_tokens = response.usage.prompt_tokens
+                r_tokens = response.usage.completion_tokens
+            else:
+                p_tokens = self._estimate_tokens(prompt + system_prompt)
+                r_tokens = self._estimate_tokens(content)
+
+            self.total_prompt_tokens += p_tokens
+            self.total_completion_tokens += r_tokens
+            cost = self._calculate_cost(p_tokens, r_tokens)
+            self.total_cost_usd += cost
 
             latency = time.time() - start_time
-            logger.info(f"LLM [{self.model}] {latency:.2f}s | P: {p_tokens}t | R: {r_tokens}t | Total: {self.total_prompt_tokens + self.total_response_tokens}t")
+            logger.info(f"LLM [{self.model}] {latency:.2f}s | P: {p_tokens}t | R: {r_tokens}t | Cost: ${cost:.6f} | Total: {self.total_prompt_tokens + self.total_completion_tokens}t")
             return content
 
         except Exception as e:

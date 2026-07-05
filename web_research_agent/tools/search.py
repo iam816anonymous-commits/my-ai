@@ -3,7 +3,7 @@ import re
 import time
 from typing import List, Dict, Tuple, Any, Set
 from ddgs import DDGS
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 from tenacity import retry, stop_after_attempt, wait_exponential
 from web_research_agent.config import (
     MAX_SEARCH_RESULTS, WEIGHT_TIER_1, WEIGHT_TIER_2,
@@ -18,6 +18,18 @@ TIER_1 = {"arxiv.org", "nature.com", "science.org", "ieee.org", "acm.org", "mit.
 TIER_2 = {"microsoft.com", "google.com", "openai.com", "anthropic.com", "nvidia.com", "github.com", "docs.", "developer.", "gartner.com", "mckinsey.com"}
 TIER_3 = {"reuters.com", "apnews.com", "bbc.com", "bloomberg.com", "techcrunch.com", "wired.com"}
 
+def canonicalize_url(url: str) -> str:
+    """Standardizes URL to prevent duplicates (remove fragments, trailing slashes)."""
+    try:
+        p = urlparse(url)
+        # Remove common tracking params
+        query = "&".join([q for q in p.query.split("&") if not any(x in q.lower() for x in ["utm_", "ref", "fbclid"])])
+        # Reconstruct without fragment and with cleaned query
+        new_url = urlunparse((p.scheme, p.netloc, p.path.rstrip("/"), p.params, query, ""))
+        return new_url
+    except:
+        return url
+
 def get_source_v5_info(url: str, title: str = "") -> SourceV2Info:
     url_lower = url.lower()
     netloc = urlparse(url_lower).netloc
@@ -26,21 +38,30 @@ def get_source_v5_info(url: str, title: str = "") -> SourceV2Info:
     tier = 5
     stype = "Web"
 
-    if any(d in url_lower for d in TIER_1):
+    # Authority Priority
+    if any(d in netloc for d in TIER_1):
         score, tier, stype = float(WEIGHT_TIER_1), 1, "Academic/Institutional"
-    elif any(d in url_lower for d in TIER_2):
+    elif any(d in netloc for d in TIER_2):
         score, tier, stype = float(WEIGHT_TIER_2), 2, "Technical/Official"
-    elif any(d in url_lower for d in TIER_3):
+    elif any(d in netloc for d in TIER_3):
         score, tier, stype = float(WEIGHT_TIER_3), 3, "Media"
-    elif any(d in url_lower for d in ["blog.", "engineering.", "substack.com"]):
+    elif any(d in netloc for d in ["blog.", "engineering.", "substack.com", "medium.com"]):
+        # Medium is Tier 4 now as requested to reduce priority
         score, tier, stype = float(WEIGHT_TIER_4), 4, "Technical Blog"
 
-    # Validation
+    # Validation (expanded junk detection)
     rej = None
-    if any(p in url_lower for p in ["/search?", "/login", "/signup", "cookie-policy", "captcha"]):
+    junk_patterns = [
+        "/search?", "/login", "/signup", "cookie-policy", "captcha",
+        "privacy-policy", "terms-of-service", "unsubscribe", "subscribe",
+        "account", "settings", "profile", "cart", "checkout"
+    ]
+    if any(p in url_lower for p in junk_patterns):
         rej = "Non-research page"
     elif len(url_lower) < 15:
         rej = "Thin URL"
+    elif any(x in netloc for x in ["linkedin.com", "facebook.com", "twitter.com", "instagram.com"]):
+        rej = "Social Media (Low Research Value)"
 
     # Freshness
     if str(time.localtime().tm_year) in url or str(time.localtime().tm_year) in title:
@@ -71,22 +92,23 @@ class SearchEngineManager:
                             url = r.get("href")
                             if not url: continue
 
-                            info = get_source_v5_info(url, r.get("title", ""))
+                            c_url = canonicalize_url(url)
+                            info = get_source_v5_info(c_url, r.get("title", ""))
                             if info.rejection_reason:
                                 rejected.append(info)
                                 continue
 
-                            # Duplicate Intelligence
-                            p = urlparse(url)
-                            fp = f"{p.netloc}{p.path}".rstrip("/")
+                            # Duplicate Intelligence (Fingerprint based on netloc + path)
+                            p = urlparse(c_url)
+                            fp = f"{p.netloc}{p.path}".lower()
                             if fp in seen_fingerprints:
                                 info.rejection_reason = "Duplicate mirror"
                                 rejected.append(info)
                                 continue
                             seen_fingerprints.add(fp)
 
-                            if url not in found:
-                                found[url] = {"url": url, "title": r.get("title", ""), "score": info.score, "tier": info.tier, "source_type": info.type}
+                            if c_url not in found:
+                                found[c_url] = {"url": c_url, "title": r.get("title", ""), "score": info.score, "tier": info.tier, "source_type": info.type}
                     except:
                         self.health[provider].timeouts += 1
 

@@ -92,23 +92,33 @@ class ResearchAgent:
                     state.successful_extractions += len(valid_texts)
                     state.profiling.stages[f"fetch_iter_{state.iterations}"] = time.time() - start_fetch
 
-                    # Summarize
-                    iteration_summaries = []
-                    for url, text in valid_texts.items():
+                    # Summarize (Parallel)
+                    progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Parallel Summarization...")
+                    from concurrent.futures import ThreadPoolExecutor
+
+                    def summarize_and_score(url, text):
                         summary = summarize_article(text, self.llm_client)
-                        state.profiling.llm_calls += 1
                         s_info = next((s for s in scored if s["url"] == url), {"score": 50, "tier": 5, "source_type": "Unknown"})
-                        article_summary = ArticleSummary(url=url, summary=summary, quality_score=float(s_info["score"]), source_tier=s_info["tier"], source_type=s_info["source_type"])
-                        iteration_summaries.append(article_summary)
-                        state.summaries.append(article_summary)
-                        state.successful_summaries += 1
+                        return ArticleSummary(
+                            url=url,
+                            summary=summary,
+                            quality_score=float(s_info["score"]),
+                            source_tier=s_info["tier"],
+                            source_type=s_info["source_type"]
+                        )
+
+                    with ThreadPoolExecutor(max_workers=CONCURRENCY) as executor:
+                        iteration_summaries = list(executor.map(lambda x: summarize_and_score(*x), valid_texts.items()))
+
+                    state.summaries.extend(iteration_summaries)
+                    state.successful_summaries += len(iteration_summaries)
 
                     state.knowledge_base = update_knowledge_base(state.knowledge_base, iteration_summaries, state.plan)
 
                     # Reasoning
                     progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Evaluating...")
                     start_reason = time.time()
-                    res = evaluate_research(query, state.plan, state.summaries, self.llm_client, state.iterations, state.objective_states)
+                    res = evaluate_research(query, state.plan, state.summaries, self.llm_client, state.iterations, state.urls_found, state.objective_states)
                     for os in res.objective_states:
                         state.objective_states[os.objective] = os
                     state.contradictions.extend(res.contradictions)
@@ -122,7 +132,14 @@ class ResearchAgent:
                     progress.update(t_loop, advance=1)
                     avg_cov = sum(o.coverage for o in state.objective_states.values()) / len(state.objective_states)
                     tier1_count = sum(1 for s in state.summaries if s.source_tier == 1)
-                    if avg_cov >= CONFIDENCE_THRESHOLD or tier1_count >= EVIDENCE_SATURATION_THRESHOLD: break
+
+                    # Adaptive Stopping Decision
+                    if avg_cov >= 85 and state.confidence_breakdown.overall >= 85:
+                        logger.info(f"Adaptive stop: High coverage ({avg_cov:.1f}%) and confidence ({state.confidence_breakdown.overall:.1f}%) achieved.")
+                        break
+                    if tier1_count >= EVIDENCE_SATURATION_THRESHOLD:
+                        logger.info(f"Adaptive stop: Evidence saturation reached ({tier1_count} Tier 1 sources).")
+                        break
 
                 # Synthesis
                 t_report = progress.add_task("[cyan]Synthesis...", total=100)
@@ -136,6 +153,11 @@ class ResearchAgent:
             logger.exception("Pipeline fatal error")
             self._save_diagnostics(state, e)
             raise e
+        finally:
+            # Update profiling with LLM usage before saving trace
+            state.profiling.prompt_tokens = self.llm_client.total_prompt_tokens
+            state.profiling.completion_tokens = self.llm_client.total_completion_tokens
+            state.profiling.estimated_cost_usd = self.llm_client.total_cost_usd
 
         if TRACE_MODE: save_trace_artifacts(state, state.report_id)
         self._display_summary(state, evaluation)

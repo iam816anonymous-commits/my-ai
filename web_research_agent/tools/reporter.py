@@ -30,25 +30,37 @@ def generate_final_report(
 
     STRUCTURE:
     # {plan.topic}
-    ## Executive Dashboard (Bottom-line + Key Findings)
-    ## Executive Recommendations (Strategic advice)
-    ## Practical Applications (How to use this info)
-    ## Decision Maker Notes (One-paragraph summary)
-    ## Background & Context
-    ## Detailed Analysis (Synthesized themes with citations [n])
-    ## Supporting Evidence (Claims, Sources, Strength Justification)
-    ## Contradictions & Conflicts
-    ## Research Gaps (Missing info + why)
-    ## Confidence Breakdown ({confidence.overall}/100)
-    ## References (Numbered list)
+    ## Executive Dashboard
+    ## Strategic Recommendations & Tradeoffs
+    ## Practical Applications
+    ## Decision Maker Summary
+    ## Context & Background
+    ## Analytical Deep Dive (Synthesized analysis with citations [n])
+    ## Counterarguments & Uncertainty Analysis (Discuss conflicting views)
+    ## Evidence Catalog (Claims, Confirmations, Strength)
+    ## Detected Contradictions
+    ## Research Gaps & Future Directions
+    ## Confidence & Methodology ({confidence.overall}/100)
+       - {confidence.explanation}
+    ## References
     ## Further Reading
     """
     try:
         content = llm_client.call(prompt, "Senior Analyst Synthesis Engine. Gartner/McKinsey style.")
         return validate_and_repair_report(content, summaries)
     except Exception as e:
-        logger.error(f"Synthesis failed: {e}")
-        return "# Synthesis Error\n\nRaw evidence available in logs."
+        logger.error(f"Synthesis failed: {e}. Falling back to template-based synthesis.")
+        return generate_template_report(summaries, plan, confidence)
+
+def generate_template_report(summaries: List[ArticleSummary], plan: ResearchPlan, confidence: ConfidenceBreakdown) -> str:
+    """Fallback synthesis using a structured template when LLM fails."""
+    report = f"# Research Report: {plan.topic} (Fallback Synthesis)\n\n"
+    report += f"## Executive Dashboard\nConfidence: {confidence.overall}/100\nStatus: LLM Synthesis Unavailable - Data provided as summary catalog.\n\n"
+    report += "## Research Summary Catalog\n\n"
+    for i, s in enumerate(summaries, 1):
+        report += f"### [{i}] {s.url}\nType: {s.source_type} | Tier: {s.source_tier}\n\n{s.summary}\n\n"
+    report += "## Methodology\nThis report was generated using a template-based fallback system due to a synthesis engine failure. Data accuracy is preserved from source summaries."
+    return report
 
 def validate_and_repair_report(content: str, summaries: List[ArticleSummary]) -> str:
     """Ensures structure integrity and repairs malformed markers."""
