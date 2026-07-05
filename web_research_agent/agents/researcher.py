@@ -28,8 +28,19 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 class ResearchAgent:
-    def __init__(self):
+    def __init__(self, on_progress=None):
+        """
+        :param on_progress: Callback function(event_type: str, data: dict)
+        """
         self.llm_client = LLMClient()
+        self.on_progress = on_progress
+
+    def _emit(self, event_type: str, state: ResearchState):
+        if self.on_progress:
+            try:
+                self.on_progress(event_type, state.model_dump())
+            except Exception as e:
+                logger.error(f"Progress callback error: {e}")
 
     def run(self, query: str) -> Tuple[ResearchState, SelfEvaluation]:
         state = ResearchState(query=query, report_id=storage.generate_report_id())
@@ -42,11 +53,13 @@ class ResearchAgent:
             with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), TimeElapsedColumn(), console=console) as progress:
                 # 1. Planning
                 t_plan = progress.add_task("[yellow]Strategizing...", total=100)
+                self._emit("planning_start", state)
                 state.plan = generate_research_plan(query, self.llm_client)
                 for obj in state.plan.objectives:
                     state.objective_states[obj] = ObjectiveState(objective=obj)
                 progress.update(t_plan, completed=100)
                 state.profiling.stages["planning"] = progress.tasks[t_plan].elapsed or 0.0
+                self._emit("planning_complete", state)
 
                 # 2. Research Loop
                 t_loop = progress.add_task("[green]Evidence Cycles", total=MAX_ITERATIONS)
@@ -57,6 +70,7 @@ class ResearchAgent:
 
                     # Search
                     progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Searching...")
+                    self._emit("search_start", state)
                     start_search = time.time()
                     scored, rejected, health = search_web(curr_queries, MAX_SEARCH_RESULTS)
                     state.search_health.update(health)
@@ -65,6 +79,7 @@ class ResearchAgent:
                     new_urls = [s["url"] for s in scored if s["url"] not in state.sources_collected]
                     state.sources_collected.extend(new_urls)
                     state.profiling.stages[f"search_iter_{state.iterations}"] = time.time() - start_search
+                    self._emit("search_complete", state)
 
                     # TASK 5: Search validation
                     if not new_urls and state.iterations == 1:
@@ -81,6 +96,7 @@ class ResearchAgent:
                     # TASK 6: Pipeline integrity - ensure evidence exists before proceeding
                     # Fetch & Extract
                     progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Parallel Fetching...")
+                    self._emit("fetch_start", state)
                     start_fetch = time.time()
                     html_map, latency = fetch_all(new_urls, CONCURRENCY)
                     state.profiling.http_latency += latency
@@ -91,9 +107,11 @@ class ResearchAgent:
                     valid_texts = {u: t for u, t in texts_map.items() if t}
                     state.successful_extractions += len(valid_texts)
                     state.profiling.stages[f"fetch_iter_{state.iterations}"] = time.time() - start_fetch
+                    self._emit("fetch_complete", state)
 
                     # Summarize (Parallel)
                     progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Parallel Summarization...")
+                    self._emit("summarize_start", state)
                     from concurrent.futures import ThreadPoolExecutor
 
                     def summarize_and_score(url, text):
@@ -112,11 +130,13 @@ class ResearchAgent:
 
                     state.summaries.extend(iteration_summaries)
                     state.successful_summaries += len(iteration_summaries)
+                    self._emit("summarize_complete", state)
 
                     state.knowledge_base = update_knowledge_base(state.knowledge_base, iteration_summaries, state.plan)
 
                     # Reasoning
                     progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Evaluating...")
+                    self._emit("reasoning_start", state)
                     start_reason = time.time()
                     res = evaluate_research(query, state.plan, state.summaries, self.llm_client, state.iterations, state.urls_found, state.objective_states)
                     for os in res.objective_states:
@@ -128,6 +148,7 @@ class ResearchAgent:
                     state.confidence_breakdown = res.confidence_breakdown or calculate_explainable_confidence(state.model_dump())
                     state.confidence_evolution.append(state.confidence_breakdown.overall)
                     state.profiling.stages[f"reasoning_iter_{state.iterations}"] = time.time() - start_reason
+                    self._emit("reasoning_complete", state)
 
                     progress.update(t_loop, advance=1)
                     avg_cov = sum(o.coverage for o in state.objective_states.values()) / len(state.objective_states)
@@ -143,11 +164,13 @@ class ResearchAgent:
 
                 # Synthesis
                 t_report = progress.add_task("[cyan]Synthesis...", total=100)
+                self._emit("synthesis_start", state)
                 final_content = generate_final_report(state.summaries, state.plan, self.llm_client, state.evidence_graph.items, state.contradictions, state.confidence_breakdown, state.gaps)
                 evaluation = run_self_evaluation(final_content, state.plan, self.llm_client)
                 export_report(final_content, state.plan, state.model_dump(), storage)
                 storage.update_index({"id": state.report_id, "query": query, "created_at": datetime.now().isoformat(), "confidence": state.confidence_breakdown.overall, "coverage": round(avg_cov, 1), "grade": evaluation.overall_grade, "runtime": str(datetime.now() - state.start_time).split('.')[0], "report": f"reports/{state.report_id}.md", "trace": f"traces/{state.report_id}.md"})
                 progress.update(t_report, completed=100)
+                self._emit("synthesis_complete", state)
 
         except Exception as e:
             logger.exception("Pipeline fatal error")

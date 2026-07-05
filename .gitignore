@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.env
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Research Agent Artifacts
+web_research_agent/output/reports/*
+web_research_agent/output/traces/*
+web_research_agent/output/exports/*
+web_research_agent/output/benchmarks/*
+web_research_agent/output/runtime/*
+web_research_agent/cache/*
+web_research_agent/logs/*
+!web_research_agent/output/reports/.gitkeep
+!web_research_agent/output/traces/.gitkeep
+!web_research_agent/output/exports/.gitkeep
+!web_research_agent/output/benchmarks/.gitkeep
+!web_research_agent/output/runtime/.gitkeep
+!web_research_agent/cache/.gitkeep
+!web_research_agent/logs/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
