@@ -91,11 +91,12 @@ def validate_config():
 
     # 2. Dependencies
     try:
-        from scripts.check_dependencies import check_dependencies
-        if not check_dependencies():
-            errors.append("Missing required dependencies.")
+        from web_research_agent.tools.dependency import check_dependencies
+        success, missing = check_dependencies()
+        if not success:
+            errors.append(f"Missing dependencies: {', '.join(missing)}")
     except ImportError:
-        errors.append("Dependency checker missing.")
+        errors.append("Dependency checker tool missing.")
 
     # 3. Network
     try:

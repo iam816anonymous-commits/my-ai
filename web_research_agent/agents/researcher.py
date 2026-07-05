@@ -65,8 +65,20 @@ class ResearchAgent:
                     new_urls = [s["url"] for s in scored if s["url"] not in state.sources_collected]
                     state.sources_collected.extend(new_urls)
                     state.profiling.stages[f"search_iter_{state.iterations}"] = time.time() - start_search
+
+                    # TASK 5: Search validation
+                    if not new_urls and state.iterations == 1:
+                        # CRITICAL: No evidence found on first iteration
+                        state.report_status = "failed_no_evidence"
+                        error_msg = f"No unique URLs discovered for queries: {curr_queries}"
+                        self._save_diagnostics(state, ValueError(error_msg))
+                        console.print(f"\n[bold red]ERROR: Evidence collection failed.[/bold red]")
+                        console.print(f"[red]{error_msg}[/red]")
+                        return state, evaluation
+
                     if not new_urls: break
 
+                    # TASK 6: Pipeline integrity - ensure evidence exists before proceeding
                     # Fetch & Extract
                     progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Parallel Fetching...")
                     start_fetch = time.time()

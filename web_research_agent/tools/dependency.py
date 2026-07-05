@@ -1,5 +1,7 @@
-import sys
 import importlib
+import logging
+
+logger = logging.getLogger(__name__)
 
 def check_dependencies():
     required = [
@@ -27,14 +29,5 @@ def check_dependencies():
             missing.append(package)
 
     if missing:
-        print("\n[bold red]ERROR: Missing Dependencies![/bold red]")
-        print(f"The following packages are required but not installed: {', '.join(missing)}")
-        print("\nPlease run: pip install -r web_research_agent/requirements.txt\n")
-        return False
-
-    print("[green]All dependencies are present and importable.[/green]")
-    return True
-
-if __name__ == "__main__":
-    from rich import print
-    sys.exit(0 if check_dependencies() else 1)
+        return False, missing
+    return True, []

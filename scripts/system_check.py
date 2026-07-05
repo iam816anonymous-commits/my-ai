@@ -1,7 +1,7 @@
 import sys
 import os
 from rich import print as rprint
-from scripts.check_dependencies import check_dependencies
+from web_research_agent.tools.dependency import check_dependencies
 from scripts.filesystem_check import check_filesystem
 from scripts.pipeline_check import check_pipeline_contracts
 from scripts.health_check import check_health
@@ -20,7 +20,12 @@ def run_system_audit():
     results = []
     for name, func in checks:
         rprint(f"[bold white]Phase: {name}[/bold white]")
-        success = func()
+        if name == "Dependencies":
+            success, missing = func()
+            if success: rprint("[green]All dependencies present.[/green]")
+            else: rprint(f"[red]Missing: {', '.join(missing)}[/red]")
+        else:
+            success = func()
         results.append((name, success))
         print("-" * 20)
 

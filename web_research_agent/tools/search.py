@@ -2,7 +2,7 @@ import logging
 import re
 import time
 from typing import List, Dict, Tuple, Any, Set
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 from urllib.parse import urlparse
 from tenacity import retry, stop_after_attempt, wait_exponential
 from web_research_agent.config import (
@@ -54,10 +54,6 @@ class SearchEngineManager:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=8))
     def search(self, queries: List[str], max_results_total: int = MAX_SEARCH_RESULTS) -> Tuple[List[Dict], List[SourceV2Info], Dict[str, SearchHealth]]:
-        if isinstance(queries, str):
-            logger.warning("search() received a single string instead of a list of strings. Converting to list.")
-            queries = [queries]
-
         found = {}
         rejected = []
         seen_fingerprints = set()
@@ -103,4 +99,22 @@ class SearchEngineManager:
         return sorted_res[:max_results_total], rejected, self.health
 
 def search_web(queries: List[str], max_results_total: int = MAX_SEARCH_RESULTS) -> Tuple[List[Dict], List[SourceV2Info], Dict[str, SearchHealth]]:
+    # TASK 2, 3, 4: Strict validation and debugging (PRE-RETRY)
+    if isinstance(queries, str):
+        raise ValueError(f"CRITICAL REGRESSION: search_web received a STRING instead of a LIST. Query: '{queries}'")
+
+    if not isinstance(queries, list):
+        raise ValueError(f"CRITICAL REGRESSION: search_web received {type(queries)} instead of a LIST.")
+
+    # Ensure all elements are strings
+    for i, q in enumerate(queries):
+        if not isinstance(q, str):
+             raise ValueError(f"CRITICAL REGRESSION: search_web received non-string at index {i}: {type(q)}")
+
+    # Debugging Output
+    print(f"\nSearch Queries ({len(queries)})")
+    print(f"Query Type: {type(queries)}")
+    for i, q in enumerate(queries, 1):
+        print(f"{i}. {q} (Length: {len(q)})")
+
     return SearchEngineManager().search(queries, max_results_total)
