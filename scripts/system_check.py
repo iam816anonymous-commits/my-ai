@@ -1,7 +1,7 @@
 import sys
 import os
 from rich import print as rprint
-from scripts.dependency_check import check_dependencies
+from scripts.check_dependencies import check_dependencies
 from scripts.filesystem_check import check_filesystem
 from scripts.pipeline_check import check_pipeline_contracts
 from scripts.health_check import check_health
