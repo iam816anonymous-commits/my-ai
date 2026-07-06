@@ -32,7 +32,9 @@ class PipelineResult(BaseModel, Generic[T]):
     payload: Optional[T] = None
     errors: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metrics: Dict[str, Any] = Field(default_factory=dict)
+    timing: float = 0.0
+    stage: str = ""
 
 class ObjectiveState(BaseModel):
     objective: str

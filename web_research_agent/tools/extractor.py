@@ -2,133 +2,134 @@ import logging
 import trafilatura
 from bs4 import BeautifulSoup
 import re
-from typing import List, Dict
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+import hashlib
+from typing import List, Dict, Optional, Any
+from concurrent.futures import ThreadPoolExecutor
 from web_research_agent.config import MAX_ARTICLE_CHARS, CONCURRENCY
 from web_research_agent.tools.cache import cache
+from web_research_agent.models.schemas import PipelineResult
 
 logger = logging.getLogger(__name__)
 
-def clean_html(html: str) -> str:
-    """Aggressive HTML noise reduction."""
+def clean_html_v2(html: str) -> str:
+    """Production-grade HTML noise reduction."""
     if not html: return ""
     soup = BeautifulSoup(html, "html.parser")
-    for tag in soup.find_all(["script", "style", "nav", "footer", "aside", "header", "form", "button", "iframe", "table", "figure", "input", "label"]):
+    # Aggressive tag removal
+    for tag in soup.find_all(["script", "style", "nav", "footer", "aside", "header", "form", "button", "iframe", "table", "figure", "input", "label", "svg", "noscript"]):
         tag.decompose()
-    patterns = re.compile(r"infobox|sidebar|nav|menu|footer|ad-|promo|social|comment|share|metadata|reference|reflist|mw-empty-elt|citation", re.I)
+
+    # Class/ID patterns for boilerplate
+    patterns = re.compile(r"infobox|sidebar|nav|menu|footer|ad-|promo|social|comment|share|metadata|reference|reflist|mw-empty-elt|citation|cookie|policy|consent|banner|toolbar", re.I)
     for el in soup.find_all(attrs={"class": patterns}): el.decompose()
     for el in soup.find_all(attrs={"id": patterns}): el.decompose()
+
     return str(soup)
 
-def deduplicate_text(text: str) -> str:
-    """Similarity-based paragraph deduplication."""
-    paragraphs = text.split('\n\n')
-    seen, unique = set(), []
-    for p in paragraphs:
-        p_clean = p.strip()
-        if not p_clean: continue
-        norm = re.sub(r'\W+', '', p_clean.lower())
-        if norm not in seen:
-            seen.add(norm)
-            unique.append(p_clean)
-    return '\n\n'.join(unique)
-
-import hashlib
-
-def is_junk_content(text: str, html: str) -> bool:
-    """Detects if content is a placeholder, cookie banner, or nav-only page."""
-    if not text or len(text) < 200: return True
+def is_junk_v2(text: str) -> bool:
+    """Improved junk detection to prevent placeholder pages."""
+    if not text or len(text) < 300: return True
 
     junk_patterns = [
-        r"enable cookies", r"javascript is required", r"access denied",
-        r"verify you are a human", r"captcha", r"robot test",
-        r"403 forbidden", r"404 not found", r"security challenge",
-        r"just a moment", r"please wait while we verify",
-        r"cookie policy", r"agree to our use of cookies",
-        r"sign in to your account", r"forgot password"
+        r"enable cookies", r"javascript is required", r"access denied", r"verify you are a human",
+        r"captcha", r"robot test", r"403 forbidden", r"404 not found", r"security challenge",
+        r"just a moment", r"cookie policy", r"agree to our use of cookies", r"sign in to your account"
     ]
-
     text_lower = text.lower()
-    if any(re.search(p, text_lower) for p in junk_patterns):
-        return True
+    return any(re.search(p, text_lower) for p in junk_patterns)
 
-    # Check for search result pages
-    if "results for" in text_lower and ("next page" in text_lower or "previous page" in text_lower):
-        return True
-
-    return False
-
-def extract_text(html: str) -> str:
-    """Professional article extraction with caching."""
+def extract_text_v2(html: str) -> str:
+    """Extracts structured content with caching."""
     if not html: return ""
 
-    # Check cache for clean text
     stable_hash = hashlib.sha256(html.encode('utf-8')).hexdigest()
-    content_hash = f"extract_{stable_hash}"
-    cached = cache.get(content_hash)
+    content_key = f"extract_v2_{stable_hash}"
+    cached = cache.get(content_key)
     if cached: return cached
 
-    # If it's already plain text (from PDF)
-    if not html.strip().startswith("<"):
-        text = html[:MAX_ARTICLE_CHARS]
-        if is_junk_content(text, ""): return ""
-        cache.set(content_hash, text)
-        return text
-
     try:
-        cleaned = clean_html(html)
-        extracted = trafilatura.extract(cleaned, include_comments=False, include_tables=False, fast=True)
-        if not extracted or len(extracted) < 150:
+        # Fallback for plain text (e.g. PDF extraction result)
+        if not html.strip().startswith("<"):
+            text = html[:MAX_ARTICLE_CHARS]
+            if is_junk_v2(text): return ""
+            cache.set(content_key, text)
+            return text
+
+        cleaned = clean_html_v2(html)
+        # Use trafilatura with specific flags for article extraction
+        extracted = trafilatura.extract(
+            cleaned,
+            include_comments=False,
+            include_tables=False,
+            include_images=False,
+            no_fallback=False
+        )
+
+        if not extracted or len(extracted) < 200:
             soup = BeautifulSoup(cleaned, "html.parser")
-            extracted = soup.get_text(separator="\n")
+            extracted = soup.get_text(separator="\n\n")
 
-        clean_text = deduplicate_text(extracted)[:MAX_ARTICLE_CHARS]
+        # Clean extra whitespace
+        text = re.sub(r'\n{3,}', '\n\n', extracted).strip()
+        final_text = text[:MAX_ARTICLE_CHARS]
 
-        if is_junk_content(clean_text, html):
+        if is_junk_v2(final_text):
             return ""
 
-        cache.set(content_hash, clean_text)
-        return clean_text
+        cache.set(content_key, final_text)
+        return final_text
     except Exception as e:
-        logger.error(f"Extract fail: {e}")
+        logger.error(f"Extraction error: {e}")
         return ""
 
 def validate_semantic_relevance(text: str, query: str, llm_client) -> bool:
     """Verifies if the extracted text is relevant to the research query."""
     if not text or not query: return False
 
-    prompt = f"""
-    Research Query: {query}
-
-    Extracted Text Fragment:
-    {text[:1000]}
-
-    Is this content semantically relevant to the research query?
-    Exclude generic homepages, cookie walls, search result lists, or unrelated platforms (e.g., YouTube pages for non-video research).
-
-    Answer with only "YES" or "NO".
-    """
+    prompt = f"Query: {query}\n\nContent Fragment: {text[:800]}\n\nIs this content semantically relevant to the query? Answer ONLY 'YES' or 'NO'."
     try:
         response = llm_client.summarize(prompt).strip().upper()
         return "YES" in response
     except Exception as e:
-        logger.warning(f"Semantic validation failed: {e}")
-        return True # Fallback to true to avoid missing data on API error
+        logger.warning(f"Semantic validation error: {e}")
+        return True # Default to true on LLM error to avoid data loss
 
-def extract_all(html_contents: Dict[str, str], query: str = "", llm_client = None) -> Dict[str, str]:
-    """Parallel extraction with optional semantic validation."""
+def extract_all(html_contents: Dict[str, str], query: str = "", llm_client = None) -> PipelineResult[Dict[str, str]]:
+    """Parallel extraction with stage metrics and validation."""
+    start_time = time.time()
     results = {}
-    with ThreadPoolExecutor(max_workers=CONCURRENCY) as executor:
-        future_to_url = {executor.submit(extract_text, html): url for url, html in html_contents.items()}
-        for future in future_to_url:
-            url = future_to_url[future]
-            try:
-                text = future.result()
-                if text and query and llm_client:
-                    if not validate_semantic_relevance(text, query, llm_client):
-                        logger.info(f"Rejected unrelated content: {url}")
-                        text = ""
-                results[url] = text
-            except:
-                results[url] = ""
-    return results
+    valid_count = 0
+    rejected_count = 0
+
+    try:
+        with ThreadPoolExecutor(max_workers=CONCURRENCY) as executor:
+            future_to_url = {executor.submit(extract_text_v2, html): url for url, html in html_contents.items()}
+            for future in future_to_url:
+                url = future_to_url[future]
+                try:
+                    text = future.result()
+                    if text:
+                        if query and llm_client:
+                            if not validate_semantic_relevance(text, query, llm_client):
+                                logger.info(f"Rejected irrelevant content: {url}")
+                                rejected_count += 1
+                                results[url] = ""
+                                continue
+                        results[url] = text
+                        valid_count += 1
+                    else:
+                        results[url] = ""
+                        rejected_count += 1
+                except:
+                    results[url] = ""
+                    rejected_count += 1
+
+        return PipelineResult(
+            success=True,
+            payload=results,
+            metrics={"extracted": valid_count, "rejected": rejected_count},
+            timing=time.time() - start_time,
+            stage="extraction"
+        )
+    except Exception as e:
+        return PipelineResult(success=False, errors=[str(e)], stage="extraction", timing=time.time() - start_time)

@@ -85,7 +85,12 @@ class ResearchAgent:
                     if not fresh_queries: fresh_queries = curr_queries[:2]
 
                     start_search = time.time()
-                    scored, rejected, health = search_web(fresh_queries, MAX_SEARCH_RESULTS)
+                    search_res = search_web(fresh_queries, MAX_SEARCH_RESULTS)
+                    if not search_res.success:
+                         logger.error(f"Search failed: {search_res.errors}")
+                         continue
+
+                    scored, rejected, health = search_res.payload
                     state.search_health.update(health)
                     state.urls_found += (len(scored) + len(rejected))
                     state.urls_rejected.extend(rejected)
@@ -129,7 +134,12 @@ class ResearchAgent:
                             state.failed_fetches.append(url)
                             state.failed_downloads += 1
 
-                    texts_map = extract_all({u: h for u, h in html_map.items() if h}, state.query, self.llm_client)
+                    extract_res = extract_all({u: h for u, h in html_map.items() if h}, state.query, self.llm_client)
+                    if not extract_res.success:
+                         logger.error(f"Extraction failed: {extract_res.errors}")
+                         continue
+
+                    texts_map = extract_res.payload
                     valid_texts = {u: t for u, t in texts_map.items() if t}
                     for u in valid_texts:
                          logger.info(f"Pipeline Trace [{state.report_id}]: Content extracted and validated: {u}")
@@ -144,7 +154,10 @@ class ResearchAgent:
                     from concurrent.futures import ThreadPoolExecutor
 
                     def summarize_and_score(url, text):
-                        summary = summarize_article(text, self.llm_client)
+                        sum_res = summarize_article(text, self.llm_client, state.query)
+                        if not sum_res.success:
+                             return None
+                        summary = sum_res.payload
                         s_info = next((s for s in scored if s["url"] == url), {"score": 50, "tier": 5, "source_type": "Unknown"})
                         return ArticleSummary(
                             url=url,
@@ -155,7 +168,8 @@ class ResearchAgent:
                         )
 
                     with ThreadPoolExecutor(max_workers=CONCURRENCY) as executor:
-                        iteration_summaries = list(executor.map(lambda x: summarize_and_score(*x), valid_texts.items()))
+                        results = list(executor.map(lambda x: summarize_and_score(*x), valid_texts.items()))
+                        iteration_summaries = [r for r in results if r is not None]
 
                     for s in iteration_summaries:
                         logger.info(f"Pipeline Trace [{state.report_id}]: Summary generated for {s.url}")
@@ -172,8 +186,13 @@ class ResearchAgent:
                     state.report_status = "reasoning"
                     self._emit("reasoning_start", state)
                     start_reason = time.time()
-                    res = evaluate_research(query, state.plan, state.summaries, self.llm_client, state.iterations, state.urls_found, state.objective_states)
+                    reason_res = evaluate_research(query, state.plan, state.summaries, self.llm_client, state.iterations, state.urls_found, state.objective_states)
 
+                    if not reason_res.success:
+                         logger.error(f"Reasoning failed: {reason_res.errors}")
+                         continue
+
+                    res = reason_res.payload
                     # Update State Machine
                     for os in res.objective_states:
                         state.objective_states[os.objective] = os
@@ -181,7 +200,7 @@ class ResearchAgent:
                     state.follow_up_queries = res.follow_up_queries
                     state.evidence_graph = EvidenceGraph(items=res.evidence_items)
                     state.gaps = res.gaps
-                    state.confidence_breakdown = res.confidence_breakdown or calculate_explainable_confidence(state.model_dump())
+                    state.confidence_breakdown = res.confidence_breakdown
                     state.confidence_evolution.append(state.confidence_breakdown.overall)
                     state.profiling.stages[f"reasoning_iter_{state.iterations}"] = time.time() - start_reason
                     self._emit("reasoning_complete", state)
