@@ -71,7 +71,10 @@ async def fetch_all_async(urls: List[str]) -> Tuple[Dict[str, str], float]:
 
 def fetch_all(urls: List[str], max_workers: int = CONCURRENCY) -> Tuple[Dict[str, str], float]:
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
+        # If we are in a running loop (like FastAPI), we can't use run_until_complete easily
+        # but the agent is called via run_in_executor which starts a new thread.
+        # In a new thread, get_running_loop() will raise RuntimeError.
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

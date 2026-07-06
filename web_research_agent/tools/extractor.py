@@ -93,13 +93,42 @@ def extract_text(html: str) -> str:
         logger.error(f"Extract fail: {e}")
         return ""
 
-def extract_all(html_contents: Dict[str, str]) -> Dict[str, str]:
-    """Parallel extraction using ProcessPoolExecutor for CPU-bound cleaning."""
+def validate_semantic_relevance(text: str, query: str, llm_client) -> bool:
+    """Verifies if the extracted text is relevant to the research query."""
+    if not text or not query: return False
+
+    prompt = f"""
+    Research Query: {query}
+
+    Extracted Text Fragment:
+    {text[:1000]}
+
+    Is this content semantically relevant to the research query?
+    Exclude generic homepages, cookie walls, search result lists, or unrelated platforms (e.g., YouTube pages for non-video research).
+
+    Answer with only "YES" or "NO".
+    """
+    try:
+        response = llm_client.summarize(prompt).strip().upper()
+        return "YES" in response
+    except Exception as e:
+        logger.warning(f"Semantic validation failed: {e}")
+        return True # Fallback to true to avoid missing data on API error
+
+def extract_all(html_contents: Dict[str, str], query: str = "", llm_client = None) -> Dict[str, str]:
+    """Parallel extraction with optional semantic validation."""
     results = {}
     with ThreadPoolExecutor(max_workers=CONCURRENCY) as executor:
         future_to_url = {executor.submit(extract_text, html): url for url, html in html_contents.items()}
         for future in future_to_url:
             url = future_to_url[future]
-            try: results[url] = future.result()
-            except: results[url] = ""
+            try:
+                text = future.result()
+                if text and query and llm_client:
+                    if not validate_semantic_relevance(text, query, llm_client):
+                        logger.info(f"Rejected unrelated content: {url}")
+                        text = ""
+                results[url] = text
+            except:
+                results[url] = ""
     return results

@@ -77,10 +77,16 @@ class LLMClient:
                  except: pass
 
             response = self.client.chat.completions.create(**kwargs)
-            if not response.choices or not response.choices[0].message:
-                raise LLMError("LLM returned an empty response (no choices or message content)")
+            if not response or not hasattr(response, 'choices') or not response.choices:
+                raise LLMError("LLM response structure invalid: missing choices.")
 
-            content = response.choices[0].message.content or ""
+            if not response.choices[0].message or response.choices[0].message.content is None:
+                # Handle cases where message might be empty but valid (e.g. tool calls only, not expected here)
+                raise LLMError("LLM response content is null or empty.")
+
+            content = response.choices[0].message.content.strip()
+            if not content and response_format != "json":
+                raise LLMError("LLM returned empty string content.")
 
             # Use actual usage if available, else estimate
             if hasattr(response, 'usage') and response.usage:
@@ -110,3 +116,7 @@ class LLMClient:
         except:
              content = self.call(prompt + " Output valid JSON.", system_prompt)
              return self._parse_json_robustly(content)
+
+    def summarize(self, text: str) -> str:
+        """Compatibility wrapper for summarizer and extractor."""
+        return self.call(text)

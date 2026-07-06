@@ -11,7 +11,7 @@ class SmartCache:
         self.expiration = expiration_seconds
 
     def _get_hash(self, key: str) -> str:
-        return hashlib.md5(key.encode()).hexdigest()
+        return hashlib.sha256(key.encode()).hexdigest()
 
     def get(self, key: str) -> Optional[Any]:
         h = self._get_hash(key)

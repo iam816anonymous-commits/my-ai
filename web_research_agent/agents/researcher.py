@@ -77,6 +77,7 @@ class ResearchAgent:
 
                     # Search (Avoid redundant queries)
                     progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Searching...")
+                    state.report_status = "searching"
                     self._emit("search_start", state)
 
                     # Filter out queries we've tried too many times
@@ -110,28 +111,35 @@ class ResearchAgent:
                     # TASK 6: Pipeline integrity - ensure evidence exists before proceeding
                     # Fetch & Extract
                     progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Parallel Fetching...")
+                    state.report_status = "fetching"
                     self._emit("fetch_start", state)
                     start_fetch = time.time()
                     html_map, latency = fetch_all(new_urls, CONCURRENCY)
                     state.profiling.http_latency += latency
 
-                    # Update Memory
+                    # Update Memory & Trace
                     for url, html in html_map.items():
+                        logger.info(f"Pipeline Trace [{state.report_id}]: URL discovered: {url}")
                         if html:
+                            logger.info(f"Pipeline Trace [{state.report_id}]: URL fetched successfully: {url}")
                             state.visited_urls.append(url)
                             state.successful_downloads += 1
                         else:
+                            logger.warning(f"Pipeline Trace [{state.report_id}]: URL fetch failed: {url}")
                             state.failed_fetches.append(url)
                             state.failed_downloads += 1
 
-                    texts_map = extract_all({u: h for u, h in html_map.items() if h})
+                    texts_map = extract_all({u: h for u, h in html_map.items() if h}, state.query, self.llm_client)
                     valid_texts = {u: t for u, t in texts_map.items() if t}
+                    for u in valid_texts:
+                         logger.info(f"Pipeline Trace [{state.report_id}]: Content extracted and validated: {u}")
                     state.successful_extractions += len(valid_texts)
                     state.profiling.stages[f"fetch_iter_{state.iterations}"] = time.time() - start_fetch
                     self._emit("fetch_complete", state)
 
                     # Summarize (Parallel)
                     progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Parallel Summarization...")
+                    state.report_status = "summarizing"
                     self._emit("summarize_start", state)
                     from concurrent.futures import ThreadPoolExecutor
 
@@ -149,14 +157,19 @@ class ResearchAgent:
                     with ThreadPoolExecutor(max_workers=CONCURRENCY) as executor:
                         iteration_summaries = list(executor.map(lambda x: summarize_and_score(*x), valid_texts.items()))
 
+                    for s in iteration_summaries:
+                        logger.info(f"Pipeline Trace [{state.report_id}]: Summary generated for {s.url}")
+
                     state.summaries.extend(iteration_summaries)
                     state.successful_summaries += len(iteration_summaries)
                     self._emit("summarize_complete", state)
 
                     state.knowledge_base = update_knowledge_base(state.knowledge_base, iteration_summaries, state.plan)
+                    logger.info(f"Pipeline Trace [{state.report_id}]: Knowledge base updated with {len(iteration_summaries)} new entries.")
 
                     # Reasoning
                     progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Evaluating Evidence...")
+                    state.report_status = "reasoning"
                     self._emit("reasoning_start", state)
                     start_reason = time.time()
                     res = evaluate_research(query, state.plan, state.summaries, self.llm_client, state.iterations, state.urls_found, state.objective_states)
@@ -188,11 +201,13 @@ class ResearchAgent:
 
                 # Synthesis
                 t_report = progress.add_task("[cyan]Synthesis...", total=100)
+                state.report_status = "synthesizing"
                 self._emit("synthesis_start", state)
                 final_content = generate_final_report(state.summaries, state.plan, self.llm_client, state.evidence_graph.items, state.contradictions, state.confidence_breakdown, state.gaps)
 
                 # Validation
                 progress.update(t_report, description="[cyan]Validating Completeness...")
+                state.report_status = "validating"
                 completeness = validate_objective_completeness(final_content, state.plan.objectives, self.llm_client)
                 for obj, status in completeness.items():
                     if status == "NO" and state.objective_states[obj].status == ObjectiveStatus.COMPLETE:
