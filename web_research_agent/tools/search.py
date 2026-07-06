@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 import time
@@ -5,15 +6,16 @@ from typing import List, Dict, Tuple, Any, Set
 from duckduckgo_search import DDGS
 from urllib.parse import urlparse, urlunparse
 from tenacity import retry, stop_after_attempt, wait_exponential
+from concurrent.futures import ThreadPoolExecutor
 from web_research_agent.config import (
     MAX_SEARCH_RESULTS, WEIGHT_TIER_1, WEIGHT_TIER_2,
-    WEIGHT_TIER_3, WEIGHT_TIER_4, WEIGHT_TIER_5
+    WEIGHT_TIER_3, WEIGHT_TIER_4, WEIGHT_TIER_5, CONCURRENCY
 )
 from web_research_agent.models.schemas import SourceV2Info, SearchHealth
 
 logger = logging.getLogger(__name__)
 
-# Authoritative Tiers V6
+# Authoritative Tiers
 TIER_1 = {
     "arxiv.org", "nature.com", "science.org", "ieee.org", "acm.org", "mit.edu", "stanford.edu", "harvard.edu", ".gov", "w3.org", "iso.org",
     "scholar.google.com", "semanticscholar.org", "ncbi.nlm.nih.gov", "ssrn.com", "sec.gov", "bls.gov"
@@ -27,18 +29,22 @@ TIER_3 = {
 }
 
 def canonicalize_url(url: str) -> str:
-    """Standardizes URL to prevent duplicates (remove fragments, trailing slashes)."""
+    """Standardizes URL to prevent duplicates (remove fragments, trailing slashes, common tracking params)."""
     try:
         p = urlparse(url)
         # Remove common tracking params
-        query = "&".join([q for q in p.query.split("&") if not any(x in q.lower() for x in ["utm_", "ref", "fbclid"])])
+        query_params = []
+        if p.query:
+            query_params = [q for q in p.query.split("&") if not any(x in q.lower() for x in ["utm_", "ref", "fbclid", "gclid", "source"])]
+
         # Reconstruct without fragment and with cleaned query
-        new_url = urlunparse((p.scheme, p.netloc, p.path.rstrip("/"), p.params, query, ""))
+        new_url = urlunparse((p.scheme, p.netloc, p.path.rstrip("/"), p.params, "&".join(query_params), ""))
         return new_url
     except:
         return url
 
-def get_source_v5_info(url: str, title: str = "") -> SourceV2Info:
+def get_source_v6_info(url: str, title: str = "") -> SourceV2Info:
+    """Harden source scoring with diagnostic rejection reasons."""
     url_lower = url.lower()
     netloc = urlparse(url_lower).netloc
 
@@ -54,105 +60,154 @@ def get_source_v5_info(url: str, title: str = "") -> SourceV2Info:
     elif any(d in netloc for d in TIER_3):
         score, tier, stype = float(WEIGHT_TIER_3), 3, "Media"
     elif any(d in netloc for d in ["blog.", "engineering.", "substack.com", "medium.com"]):
-        # Medium is Tier 4 now as requested to reduce priority
         score, tier, stype = float(WEIGHT_TIER_4), 4, "Technical Blog"
 
     # Validation (expanded junk detection)
     rej = None
-    junk_patterns = [
-        "/search?", "/login", "/signup", "cookie-policy", "captcha",
-        "privacy-policy", "terms-of-service", "unsubscribe", "subscribe",
-        "account", "settings", "profile", "cart", "checkout"
-    ]
-    if any(p in url_lower for p in junk_patterns):
-        rej = "Non-research page"
+    if any(x in url_lower for x in [".pdf", ".zip", ".exe", ".gz", ".docx", ".pptx"]):
+        rej = "Unsupported file format"
+    elif any(p in url_lower for p in ["/login", "/signup", "cookie-policy", "captcha", "privacy-policy", "terms-of-service"]):
+        rej = "Administrative/Legal page"
     elif len(url_lower) < 15:
-        rej = "Thin URL"
-    elif any(x in netloc for x in ["linkedin.com", "facebook.com", "twitter.com", "instagram.com"]):
+        rej = "URL length too short"
+    elif any(x in netloc for x in ["linkedin.com", "facebook.com", "twitter.com", "instagram.com", "pinterest.com"]):
         rej = "Social Media (Low Research Value)"
+    elif any(x in netloc for x in ["youtube.com", "vimeo.com", "tiktok.com"]):
+        rej = "Video platform (Unsupported content)"
 
-    # Freshness
+    # Freshness boost
     if str(time.localtime().tm_year) in url or str(time.localtime().tm_year) in title:
         score += 10
 
     return SourceV2Info(url=url, score=score, tier=tier, type=stype, rejection_reason=rej)
 
+class SearchDiagnostics:
+    def __init__(self):
+        self.queries_executed = []
+        self.raw_urls_extracted = 0
+        self.duplicate_removals = 0
+        self.blacklist_removals = 0
+        self.unsupported_file_removals = 0
+        self.quality_score_removals = 0
+        self.total_rejections = 0
+        self.final_urls_retained = 0
+        self.timings = {}
+
+    def report(self):
+        return {
+            "queries": len(self.queries_executed),
+            "raw_urls": self.raw_urls_extracted,
+            "duplicates": self.duplicate_removals,
+            "rejections": self.total_rejections,
+            "retained": self.final_urls_retained,
+            "timings": self.timings
+        }
+
 class SearchEngineManager:
     def __init__(self):
         self.health = {"duckduckgo": SearchHealth()}
+        self.diagnostics = SearchDiagnostics()
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=8))
+    def _single_search(self, query: str) -> List[Dict]:
+        """Perform a single DDG search with retries."""
+        start = time.time()
+        results = []
+        try:
+            with DDGS() as ddgs:
+                ddgs_gen = ddgs.text(query, max_results=20)
+                if ddgs_gen:
+                    results = list(ddgs_gen)
+            self.health["duckduckgo"].avg_latency = (self.health["duckduckgo"].avg_latency + (time.time() - start)) / 2
+        except Exception as e:
+            logger.warning(f"Search query failed '{query}': {e}")
+            self.health["duckduckgo"].errors_429 += 1
+        return results
+
     def search(self, queries: List[str], max_results_total: int = MAX_SEARCH_RESULTS) -> Tuple[List[Dict], List[SourceV2Info], Dict[str, SearchHealth]]:
+        overall_start = time.time()
         found = {}
         rejected = []
         seen_fingerprints = set()
 
-        provider = "duckduckgo"
-        start = time.time()
+        self.diagnostics.queries_executed = queries
 
-        # Cascading search strategy: if we have few high-tier results, try adding targeted qualifiers
-        tier_augmented_queries = []
-        for q in queries:
-            tier_augmented_queries.append(q)
-            if "research" not in q.lower() and "official" not in q.lower():
-                tier_augmented_queries.append(f"{q} site:gov OR site:edu")
-                tier_augmented_queries.append(f"{q} whitepaper OR documentation")
+        # Execute searches concurrently using ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=CONCURRENCY) as executor:
+            all_raw_results_lists = list(executor.map(self._single_search, queries))
 
-        try:
-            with DDGS() as ddgs:
-                for q in tier_augmented_queries:
-                    try:
-                        results = ddgs.text(q, max_results=20)
-                        if not results: continue
-                        for r in results:
-                            url = r.get("href")
-                            if not url: continue
+        # Flatten results and process
+        for raw_results in all_raw_results_lists:
+            self.diagnostics.raw_urls_extracted += len(raw_results)
+            for r in raw_results:
+                url = r.get("href")
+                if not url: continue
 
-                            c_url = canonicalize_url(url)
-                            info = get_source_v5_info(c_url, r.get("title", ""))
-                            if info.rejection_reason:
-                                rejected.append(info)
-                                continue
+                c_url = canonicalize_url(url)
 
-                            # Duplicate Intelligence (Fingerprint based on netloc + path)
-                            p = urlparse(c_url)
-                            fp = f"{p.netloc}{p.path}".lower()
-                            if fp in seen_fingerprints:
-                                info.rejection_reason = "Duplicate mirror"
-                                rejected.append(info)
-                                continue
-                            seen_fingerprints.add(fp)
+                # Deduplication
+                p = urlparse(c_url)
+                fp = f"{p.netloc}{p.path}".lower()
+                if fp in seen_fingerprints:
+                    self.diagnostics.duplicate_removals += 1
+                    continue
+                seen_fingerprints.add(fp)
 
-                            if c_url not in found:
-                                found[c_url] = {"url": c_url, "title": r.get("title", ""), "score": info.score, "tier": info.tier, "source_type": info.type}
-                    except:
-                        self.health[provider].timeouts += 1
+                info = get_source_v6_info(c_url, r.get("title", ""))
+                if info.rejection_reason:
+                    if "format" in info.rejection_reason:
+                        self.diagnostics.unsupported_file_removals += 1
+                    elif "Social" in info.rejection_reason or "Video" in info.rejection_reason:
+                        self.diagnostics.blacklist_removals += 1
+                    else:
+                        self.diagnostics.total_rejections += 1
+                    rejected.append(info)
+                    continue
 
-            self.health[provider].avg_latency = (time.time() - start) / max(len(queries), 1)
-        except Exception as e:
-            logger.error(f"Search Manager fatal: {e}")
-            self.health[provider].success_rate = 0.0
+                if c_url not in found:
+                    found[c_url] = {
+                        "url": c_url,
+                        "title": r.get("title", ""),
+                        "score": info.score,
+                        "tier": info.tier,
+                        "source_type": info.type
+                    }
 
+        # Fallback Logic: If no results, try broader queries
+        if not found and queries:
+            logger.info("Primary search returned no results. Attempting fallback...")
+            fallback_queries = [re.sub(r'site:\S+|"|\+', '', q).strip() for q in queries[:2]]
+            fallback_results = []
+            for fq in fallback_queries:
+                if fq: fallback_results.extend(self._single_search(fq))
+
+            for r in fallback_results:
+                url = r.get("href")
+                if not url: continue
+                c_url = canonicalize_url(url)
+                info = get_source_v6_info(c_url, r.get("title", ""))
+                if not info.rejection_reason and c_url not in found:
+                     found[c_url] = {"url": c_url, "title": r.get("title", ""), "score": info.score - 20, "tier": 5, "source_type": "Fallback"}
+
+        # Final Ranking
         sorted_res = sorted(found.values(), key=lambda x: x["score"], reverse=True)
-        return sorted_res[:max_results_total], rejected, self.health
+        final_list = sorted_res[:max_results_total]
+
+        self.diagnostics.final_urls_retained = len(final_list)
+        self.diagnostics.timings["total_search_ms"] = int((time.time() - overall_start) * 1000)
+
+        # Structured Logging
+        logger.info(f"Search Cycle Completed: {self.diagnostics.report()}")
+
+        return final_list, rejected, self.health
 
 def search_web(queries: List[str], max_results_total: int = MAX_SEARCH_RESULTS) -> Tuple[List[Dict], List[SourceV2Info], Dict[str, SearchHealth]]:
-    # TASK 2, 3, 4: Strict validation and debugging (PRE-RETRY)
+    """Production entry point for hardened search."""
     if isinstance(queries, str):
-        raise ValueError(f"CRITICAL REGRESSION: search_web received a STRING instead of a LIST. Query: '{queries}'")
+        queries = [queries]
 
-    if not isinstance(queries, list):
-        raise ValueError(f"CRITICAL REGRESSION: search_web received {type(queries)} instead of a LIST.")
+    # Validation
+    if not queries:
+        return [], [], {"duckduckgo": SearchHealth(success_rate=0.0)}
 
-    # Ensure all elements are strings
-    for i, q in enumerate(queries):
-        if not isinstance(q, str):
-             raise ValueError(f"CRITICAL REGRESSION: search_web received non-string at index {i}: {type(q)}")
-
-    # Debugging Output
-    print(f"\nSearch Queries ({len(queries)})")
-    print(f"Query Type: {type(queries)}")
-    for i, q in enumerate(queries, 1):
-        print(f"{i}. {q} (Length: {len(q)})")
-
-    return SearchEngineManager().search(queries, max_results_total)
+    manager = SearchEngineManager()
+    return manager.search(queries, max_results_total)

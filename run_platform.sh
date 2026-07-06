@@ -7,6 +7,9 @@ set -e
 
 echo "Starting Web Research Platform..."
 
+# Ensure log directory exists before redirection
+mkdir -p web_research_agent/logs
+
 # 1. Start Backend
 echo "Launching Backend API on port 8000..."
 export PYTHONPATH=$PYTHONPATH:.

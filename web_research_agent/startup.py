@@ -1,31 +1,38 @@
 import os
 import logging
 from pathlib import Path
-from web_research_agent.config import OUTPUT_DIR, LOGS_DIR, CACHE_DIR, LOG_LEVEL
+import web_research_agent.config as config
 
 def initialize_directories():
     """Creates every required directory using Path.mkdir(parents=True, exist_ok=True)."""
     required_dirs = [
-        OUTPUT_DIR,
-        LOGS_DIR,
-        CACHE_DIR,
-        OUTPUT_DIR / "reports",
-        OUTPUT_DIR / "traces",
-        OUTPUT_DIR / "exports" / "html",
-        OUTPUT_DIR / "exports" / "pdf",
-        OUTPUT_DIR / "exports" / "json",
-        OUTPUT_DIR / "benchmarks",
-        OUTPUT_DIR / "runtime"
+        config.OUTPUT_DIR,
+        config.LOGS_DIR,
+        config.CACHE_DIR,
+        config.OUTPUT_DIR / "reports",
+        config.OUTPUT_DIR / "traces",
+        config.OUTPUT_DIR / "exports" / "html",
+        config.OUTPUT_DIR / "exports" / "pdf",
+        config.OUTPUT_DIR / "exports" / "json",
+        config.OUTPUT_DIR / "benchmarks",
+        config.OUTPUT_DIR / "runtime"
     ]
     for d in required_dirs:
-        d.mkdir(parents=True, exist_ok=True)
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            # Ensure it is writable
+            test_file = d / ".keep"
+            test_file.touch()
+            test_file.unlink()
+        except Exception as e:
+            print(f"CRITICAL ERROR: Could not initialize directory {d}: {e}")
 
 def setup_logging():
     """
     Configures logging with a file fallback mechanism.
     Never crashes due to missing log files.
     """
-    log_file = LOGS_DIR / "research.log"
+    log_file = config.LOGS_DIR / "research.log"
     handlers = [logging.StreamHandler()] # Console fallback is always present
 
     try:
@@ -36,8 +43,11 @@ def setup_logging():
         print(f"Warning: Could not initialize file logging: {e}. Falling back to console only.")
 
     logging.basicConfig(
-        level=getattr(logging, LOG_LEVEL, logging.INFO),
+        level=getattr(logging, config.LOG_LEVEL, logging.INFO),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=handlers,
         force=True # Override any previous configuration
     )
+
+    logger = logging.getLogger(__name__)
+    logger.info("Logging initialized and directories verified.")

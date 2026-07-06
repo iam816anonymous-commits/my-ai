@@ -86,10 +86,10 @@ async def websocket_research(websocket: WebSocket):
 
             # Setup agent with progress callback
             queue = asyncio.Queue()
+            loop = asyncio.get_running_loop()
 
             def on_progress(event_type, state_data):
-                # We need to bridge thread/sync to async
-                loop = asyncio.get_event_loop()
+                # We need to bridge thread/sync to async using captured loop
                 loop.call_soon_threadsafe(queue.put_nowait, json.dumps({"event": event_type, "state": state_data}))
 
             agent = ResearchAgent(on_progress=on_progress)
@@ -99,11 +99,14 @@ async def websocket_research(websocket: WebSocket):
                 try:
                     agent.run(request.query)
                 except Exception as e:
-                    logger.error(f"Agent thread error: {e}")
-                    loop = asyncio.get_event_loop()
-                    loop.call_soon_threadsafe(queue.put_nowait, json.dumps({"event": "error", "message": str(e)}))
+                    logger.exception(f"Agent thread error: {e}")
+                    # We must use the loop from the closure
+                    loop.call_soon_threadsafe(queue.put_nowait, json.dumps({
+                        "event": "error",
+                        "message": str(e),
+                        "timestamp": datetime.now().isoformat()
+                    }))
                 finally:
-                    loop = asyncio.get_event_loop()
                     loop.call_soon_threadsafe(queue.put_nowait, None) # Sentinel
 
             loop = asyncio.get_running_loop()

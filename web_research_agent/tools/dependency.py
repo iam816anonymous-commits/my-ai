@@ -7,7 +7,7 @@ def check_dependencies():
     required = [
         "aiohttp",
         "bs4",
-        "ddgs",
+        "duckduckgo_search",
         "lxml",
         "openai",
         "pydantic",
