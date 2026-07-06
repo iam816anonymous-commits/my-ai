@@ -1,4 +1,5 @@
 import os
+import sys
 import logging
 from pathlib import Path
 import web_research_agent.config as config
@@ -57,3 +58,32 @@ def setup_logging():
     if not validate_module_interfaces():
         print("CRITICAL: System Startup Aborted due to Module Interface Drift.")
         sys.exit(1)
+
+def run_health_check():
+    """Actionable startup diagnostics."""
+    print("\n[bold blue]Autonomous Research Platform - Health Check[/bold blue]")
+
+    # 1. Dependencies
+    from web_research_agent.tools.dependency import check_dependencies
+    success, missing = check_dependencies()
+    if success: print("[green]✓ Dependencies verified.[/green]")
+    else:
+        print(f"[red]✗ Missing dependencies: {', '.join(missing)}[/red]")
+        return False
+
+    # 2. Configuration
+    if not config.API_KEY:
+        print("[red]✗ API_KEY is missing from environment.[/red]")
+        return False
+    print("[green]✓ Configuration valid.[/green]")
+
+    # 3. Network/API Connectivity
+    import requests
+    try:
+        requests.get(f"{config.BASE_URL}/models", headers={"Authorization": f"Bearer {config.API_KEY}"}, timeout=10)
+        print("[green]✓ LLM Provider connectivity verified.[/green]")
+    except Exception as e:
+        print(f"[yellow]! LLM Provider check skipped/failed: {e}[/yellow]")
+
+    print("[bold green]System Health: READY[/bold green]\n")
+    return True

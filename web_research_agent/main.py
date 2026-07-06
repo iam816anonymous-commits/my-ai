@@ -1,4 +1,5 @@
 import typer
+import sys
 from web_research_agent.agents.researcher import ResearchAgent
 from web_research_agent.config import validate_config
 from web_research_agent.startup import initialize_directories, setup_logging
@@ -15,6 +16,15 @@ def startup():
     initialize_directories()
     setup_logging()
     validate_config()
+
+@app.command()
+def health():
+    """
+    Run system health check.
+    """
+    from web_research_agent.startup import run_health_check
+    if not run_health_check():
+        sys.exit(1)
 
 @app.command()
 def research(query: str):
