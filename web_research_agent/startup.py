@@ -51,3 +51,9 @@ def setup_logging():
 
     logger = logging.getLogger(__name__)
     logger.info("Logging initialized and directories verified.")
+
+    # Module Interface Validation (Regression Protection)
+    from web_research_agent.tools.interface_validator import validate_module_interfaces
+    if not validate_module_interfaces():
+        print("CRITICAL: System Startup Aborted due to Module Interface Drift.")
+        sys.exit(1)

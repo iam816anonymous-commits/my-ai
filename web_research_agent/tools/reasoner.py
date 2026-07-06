@@ -72,6 +72,10 @@ def calculate_production_confidence(state_data: Dict) -> ConfidenceBreakdown:
         status="Finalized"
     )
 
+def calculate_explainable_confidence(*args, **kwargs):
+    """Backward compatibility wrapper for calculate_production_confidence."""
+    return calculate_production_confidence(*args, **kwargs)
+
 def evaluate_research(query: str, plan: ResearchPlan, summaries: List[ArticleSummary], llm_client: LLMClient, current_iteration: int, urls_found: int = 0, previous_states: Dict[str, ObjectiveState] = None) -> PipelineResult[ReasoningResult]:
     """Adaptive reasoning engine with objective state lifecycle."""
     start_time = time.time()
