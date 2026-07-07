@@ -178,7 +178,7 @@ class ResearchAgent:
                     state.successful_summaries += len(iteration_summaries)
                     self._emit("summarize_complete", state)
 
-                    state.knowledge_base = update_knowledge_base(state.knowledge_base, iteration_summaries, state.plan)
+                    state.knowledge_base = update_knowledge_base(state.knowledge_base, iteration_summaries, state.plan, valid_texts)
                     logger.info(f"Pipeline Trace [{state.report_id}]: Knowledge base updated with {len(iteration_summaries)} new entries.")
 
                     # Reasoning
@@ -222,7 +222,7 @@ class ResearchAgent:
                 t_report = progress.add_task("[cyan]Synthesis...", total=100)
                 state.report_status = "synthesizing"
                 self._emit("synthesis_start", state)
-                final_content = generate_final_report(state.summaries, state.plan, self.llm_client, state.evidence_graph.items, state.contradictions, state.confidence_breakdown, state.gaps)
+                final_content = generate_final_report(state.model_dump(), state.plan, self.llm_client)
 
                 # Validation
                 progress.update(t_report, description="[cyan]Validating Completeness...")
@@ -249,28 +249,34 @@ class ResearchAgent:
             state.profiling.estimated_cost_usd = self.llm_client.total_cost_usd
 
         if TRACE_MODE: save_trace_artifacts(state, state.report_id)
+        self._save_diagnostics(state) # Always save final lifecycle counts
         self._display_summary(state, evaluation)
         return state, evaluation
 
-    def _save_diagnostics(self, state, error):
+    def _save_diagnostics(self, state, error=None):
         import traceback
         diag = {
             "report_id": state.report_id,
             "query": state.query,
-            "error": str(error),
-            "traceback": traceback.format_exc(),
+            "error": str(error) if error else None,
+            "traceback": traceback.format_exc() if error else None,
             "stage": state.report_status,
             "timings": state.profiling.stages,
             "iterations": state.iterations,
-            "stats": {
-                "urls_found": state.urls_found,
-                "downloads": state.successful_downloads,
-                "extractions": state.successful_extractions,
-                "summaries": state.successful_summaries
+            "lifecycle": {
+                "URLs_discovered": state.urls_found,
+                "URLs_rejected": len(state.urls_rejected),
+                "URLs_downloaded": state.successful_downloads,
+                "URLs_failed_fetch": state.failed_downloads,
+                "Docs_extracted": state.successful_extractions,
+                "Knowledge_entries": len(state.knowledge_base),
+                "Evidence_nodes": len(state.evidence_graph.items),
+                "Contradictions": len(state.contradictions)
             }
         }
         with open(OUTPUT_DIR / "pipeline_diagnostics.json", "w") as f:
             json.dump(diag, f, indent=2)
+        logger.info(f"Lifecycle Diagnostics saved for {state.report_id}")
 
     def _display_summary(self, state, evaluation):
         runtime = datetime.now() - state.start_time

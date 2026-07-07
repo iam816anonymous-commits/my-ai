@@ -57,7 +57,7 @@ class LLMClient:
     @retry(
         stop=stop_after_attempt(MAX_RETRIES),
         wait=wait_exponential(multiplier=2, min=2, max=8),
-        retry=retry_if_exception_type((LLMRateLimitError, Exception)),
+        retry=retry_if_exception_type(LLMRateLimitError),
         before_sleep=before_sleep_log(logger, logging.WARNING)
     )
     def call(self, prompt: str, system_prompt: str = "Assistant", response_format: Optional[str] = None) -> str:
@@ -106,7 +106,11 @@ class LLMClient:
             return content
 
         except Exception as e:
-            if any(x in str(e) for x in ["429", "rate limit", "503", "overloaded", "timeout"]):
+            err_msg = str(e).lower()
+            if "401" in err_msg or "authentication" in err_msg or "api key" in err_msg:
+                logger.error(f"CRITICAL: Authentication failed. Please check your API_KEY. Error: {e}")
+                raise LLMError(f"Authentication Failure: {e}")
+            if any(x in err_msg for x in ["429", "rate limit", "503", "overloaded", "timeout"]):
                 raise LLMRateLimitError(str(e))
             raise e
 

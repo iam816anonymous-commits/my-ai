@@ -52,7 +52,11 @@ manager = ConnectionManager()
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "timestamp": datetime.now().isoformat()}
+    from web_research_agent.startup import run_health_check
+    return {
+        "status": "ok" if run_health_check() else "unhealthy",
+        "timestamp": datetime.now().isoformat()
+    }
 
 @app.get("/reports")
 def get_reports():

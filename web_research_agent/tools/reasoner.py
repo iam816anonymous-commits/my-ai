@@ -159,15 +159,32 @@ def evaluate_research(query: str, plan: ResearchPlan, summaries: List[ArticleSum
     except Exception as e:
         return PipelineResult(success=False, errors=[str(e)], stage="reasoning", timing=time.time() - start_time)
 
-def update_knowledge_base(kb: List[KnowledgeBaseEntry], new_summaries: List[ArticleSummary], plan: ResearchPlan) -> List[KnowledgeBaseEntry]:
-    """Ensures knowledge accumulates and tracks objective mapping."""
+from web_research_agent.models.schemas import SourceDocument
+import hashlib
+
+def update_knowledge_base(kb: List[KnowledgeBaseEntry], new_summaries: List[ArticleSummary], plan: ResearchPlan, valid_texts: Dict[str, str]) -> List[KnowledgeBaseEntry]:
+    """Ensures knowledge accumulates and tracks objective mapping with rich documents."""
     for s in new_summaries:
         if not any(k.source == s.url for k in kb):
+            # Create rich SourceDocument (Module 8)
+            doc_id = hashlib.md5(s.url.encode()).hexdigest()[:10]
+            doc = SourceDocument(
+                id=doc_id,
+                url=s.url,
+                title=s.title or "Untitled",
+                authority_score=s.quality_score,
+                domain=urlparse(s.url).netloc,
+                clean_text=valid_texts.get(s.url, ""),
+                summary=s.summary,
+                reliability_score=1.0 if s.source_tier <= 2 else 0.7
+            )
+
             kb.append(KnowledgeBaseEntry(
                 summary=s.summary,
                 source=s.url,
                 confidence=1.0,
                 covered_objectives=[],
-                supporting_evidence=s.summary[:300]
+                supporting_evidence=s.summary[:300],
+                document=doc
             ))
     return kb

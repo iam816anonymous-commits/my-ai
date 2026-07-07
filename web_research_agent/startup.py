@@ -77,13 +77,19 @@ def run_health_check():
         return False
     print("[green]✓ Configuration valid.[/green]")
 
-    # 3. Network/API Connectivity
+    # 3. Network/API Connectivity & Authentication
     import requests
     try:
-        requests.get(f"{config.BASE_URL}/models", headers={"Authorization": f"Bearer {config.API_KEY}"}, timeout=10)
-        print("[green]✓ LLM Provider connectivity verified.[/green]")
+        resp = requests.get(f"{config.BASE_URL}/models", headers={"Authorization": f"Bearer {config.API_KEY}"}, timeout=10)
+        if resp.status_code == 401:
+            print("[red]✗ Authentication failed (401). Invalid API_KEY.[/red]")
+            return False
+        elif resp.status_code != 200:
+            print(f"[yellow]! LLM Provider check returned status {resp.status_code}.[/yellow]")
+        else:
+            print("[green]✓ LLM Provider connectivity & Authentication verified.[/green]")
     except Exception as e:
-        print(f"[yellow]! LLM Provider check skipped/failed: {e}[/yellow]")
+        print(f"[yellow]! LLM Provider check failed: {e}[/yellow]")
 
     print("[bold green]System Health: READY[/bold green]\n")
     return True

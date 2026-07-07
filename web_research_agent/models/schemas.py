@@ -49,12 +49,32 @@ class ObjectiveState(BaseModel):
     contradictions_count: int = 0
     last_update_iteration: int = 0
 
+class SourceDocument(BaseModel):
+    """Module 8 & 9: Rich structured document schema."""
+    id: str
+    url: str
+    title: Optional[str] = None
+    authority_score: float = 0.0
+    published_date: Optional[str] = None
+    domain: str = ""
+    clean_text: str
+    summary: str
+    entities: List[str] = Field(default_factory=list)
+    claims: List[str] = Field(default_factory=list)
+    quotes: List[str] = Field(default_factory=list)
+    keywords: List[str] = Field(default_factory=list)
+    embeddings: List[float] = Field(default_factory=list)
+    reliability_score: float = 0.0
+    retrieved_at: datetime = Field(default_factory=datetime.now)
+    objective_mapping: List[str] = Field(default_factory=list)
+
 class KnowledgeBaseEntry(BaseModel):
     summary: str
     source: str
     confidence: float
     covered_objectives: List[str]
     supporting_evidence: str
+    document: Optional[SourceDocument] = None
 
 class ResearchPlan(BaseModel):
     topic: str

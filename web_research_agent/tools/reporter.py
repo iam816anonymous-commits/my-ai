@@ -13,18 +13,29 @@ from web_research_agent.config import OUTPUT_DIR, EXPORT_FORMATS
 logger = logging.getLogger(__name__)
 
 def generate_final_report(
-    summaries: List[ArticleSummary], plan: ResearchPlan, llm_client: LLMClient,
-    evidence_items: List[EvidenceItem], contradictions: List[Contradiction],
-    confidence: ConfidenceBreakdown, gaps: List[ResearchGap]
+    state_data: Dict, plan: ResearchPlan, llm_client: LLMClient
 ) -> str:
-    """Synthesizes high-fidelity analyst-grade report."""
-    evidence_text = "\n".join([f"SOURCE [{i+1}]: {s.url} ({s.source_type}, Tier {s.source_tier})\n{s.summary}" for i, s in enumerate(summaries)])
+    """Synthesizes high-fidelity analyst-grade report from Knowledge Base (Module 14)."""
+    kb = state_data.get("knowledge_base", [])
+    summaries = state_data.get("summaries", [])
+    confidence = state_data.get("confidence_breakdown")
+
+    if not kb:
+        return "# Research Report: Evidence Deficiency\n\nNo evidence was successfully extracted during this research session.\n\n## Reason\nPossible extraction or semantic validation failure. Check pipeline diagnostics."
+
+    evidence_text = ""
+    for i, entry in enumerate(kb, 1):
+        doc = entry.get("document")
+        if doc:
+            evidence_text += f"SOURCE [{i}]: {doc.get('url')} ({doc.get('domain')})\n"
+            evidence_text += f"SUMMARY: {doc.get('summary')}\n\n"
 
     prompt = f"""
     TOPIC: {plan.topic} | INTENT: {plan.intent}
-    SOURCES: {evidence_text[:15000]}
+    INTERNAL KNOWLEDGE BASE:
+    {evidence_text[:18000]}
 
-    TASK: Write a Senior Analyst Report.
+    TASK: Write a Senior Analyst Report. Use ONLY the provided Knowledge Base.
     - Inline Citations: [1], [2, 5]. Attribute every fact.
     - Style: Formal, data-driven, causality-focused.
 
