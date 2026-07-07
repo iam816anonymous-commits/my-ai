@@ -5,6 +5,10 @@ from enum import Enum
 
 T = TypeVar("T")
 
+class ResearchRequest(BaseModel):
+    """Module 19: REST API Request schema."""
+    query: str
+
 class QueryIntent(str, Enum):
     BIOGRAPHY = "Biography"
     TECHNOLOGY = "Technology"
@@ -35,6 +39,23 @@ class PipelineResult(BaseModel, Generic[T]):
     metrics: Dict[str, Any] = Field(default_factory=dict)
     timing: float = 0.0
     stage: str = ""
+
+class FetchResult(BaseModel):
+    """Module 5: Browser engine output."""
+    html_map: Dict[str, str]
+    total_latency: float
+
+class ExtractionResult(BaseModel):
+    """Module 6: Extraction engine output."""
+    texts_map: Dict[str, str]
+    valid_count: int
+    rejected_count: int
+
+class SearchResult(BaseModel):
+    """Module 2: Search engine output."""
+    scored_urls: List["SourceV2Info"]
+    rejected_urls: List["SourceV2Info"]
+    health: Dict[str, "SearchHealth"]
 
 class ObjectiveState(BaseModel):
     objective: str
@@ -161,10 +182,13 @@ class ProfilingStats(BaseModel):
 
 class SourceV2Info(BaseModel):
     url: str
+    title: str = ""
     score: float
     tier: int = 5
     type: str
     rejection_reason: Optional[str] = None
+
+SourceV2Info.model_rebuild()
 
 class SearchHealth(BaseModel):
     success_rate: float = 1.0

@@ -1,14 +1,16 @@
 import logging
+import time
 from web_research_agent.models.llm import LLMClient
-from web_research_agent.models.schemas import ResearchPlan, QueryIntent
+from web_research_agent.models.schemas import ResearchPlan, QueryIntent, PipelineResult
 import json
 
 logger = logging.getLogger(__name__)
 
-def generate_research_plan(query: str, llm_client: LLMClient) -> ResearchPlan:
+def generate_research_plan(query: str, llm_client: LLMClient) -> PipelineResult[ResearchPlan]:
     """
     Detects query intent and generates a strategic research plan with multiple objectives.
     """
+    start_time = time.time()
     sys_prompt = "You are a professional research planner. Analyze the query and output a structured JSON plan."
 
     prompt = f"""
@@ -44,12 +46,25 @@ def generate_research_plan(query: str, llm_client: LLMClient) -> ResearchPlan:
             else: intent = QueryIntent.GENERAL
 
         data["intent"] = intent
-        return ResearchPlan(**data)
+        plan = ResearchPlan(**data)
+        return PipelineResult(
+            success=True,
+            payload=plan,
+            stage="planning",
+            timing=time.time() - start_time
+        )
     except Exception as e:
         logger.error(f"Planning failed: {e}")
-        return ResearchPlan(
+        fallback_plan = ResearchPlan(
             topic=query,
             intent=QueryIntent.GENERAL,
             objectives=[f"General overview of {query}", "Key stakeholders", "Current status", "Challenges", "Future outlook"],
             queries=[query, f"{query} details", f"{query} analysis", f"{query} research"]
+        )
+        return PipelineResult(
+            success=False,
+            payload=fallback_plan,
+            errors=[str(e)],
+            stage="planning",
+            timing=time.time() - start_time
         )

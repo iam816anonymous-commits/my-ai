@@ -6,6 +6,7 @@ from pathlib import Path
 from web_research_agent.tools.search import search_web, canonicalize_url, get_source_v7_info
 from web_research_agent.startup import initialize_directories
 from web_research_agent.config import OUTPUT_DIR, LOGS_DIR, CACHE_DIR
+from web_research_agent.models.schemas import SourceV2Info
 
 # Disable logs during tests
 logging.basicConfig(level=logging.CRITICAL)
@@ -63,10 +64,10 @@ class TestSearchHarden(unittest.TestCase):
         res = search_web(queries, max_results_total=2)
 
         self.assertTrue(res.success)
-        results, rejected, health = res.payload
-        self.assertIsInstance(results, list)
-        self.assertIsInstance(health, dict)
-        self.assertIn("duckduckgo", health)
+        out = res.payload
+        self.assertIsInstance(out.scored_urls, list)
+        self.assertIsInstance(out.health, dict)
+        self.assertIn("duckduckgo", out.health)
 
 if __name__ == "__main__":
     unittest.main()

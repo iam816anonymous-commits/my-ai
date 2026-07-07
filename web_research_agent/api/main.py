@@ -4,7 +4,6 @@ import logging
 from typing import List, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from datetime import datetime
 from web_research_agent.agents.researcher import ResearchAgent
 from web_research_agent.tools.storage import storage
@@ -19,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Web Research Platform API")
 
+from web_research_agent.models.schemas import ResearchRequest
+
 # CORS for frontend development
 app.add_middleware(
     CORSMiddleware,
@@ -26,9 +27,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-class ResearchRequest(BaseModel):
-    query: str
 
 class ConnectionManager:
     def __init__(self):

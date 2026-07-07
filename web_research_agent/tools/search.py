@@ -3,7 +3,7 @@ import logging
 import re
 import time
 from typing import List, Dict, Tuple, Any, Set
-from ddgs import DDGS
+from duckduckgo_search import DDGS
 from urllib.parse import urlparse, urlunparse
 from tenacity import retry, stop_after_attempt, wait_exponential
 from concurrent.futures import ThreadPoolExecutor
@@ -11,7 +11,7 @@ from web_research_agent.config import (
     MAX_SEARCH_RESULTS, WEIGHT_TIER_1, WEIGHT_TIER_2,
     WEIGHT_TIER_3, WEIGHT_TIER_4, WEIGHT_TIER_5, CONCURRENCY
 )
-from web_research_agent.models.schemas import SourceV2Info, SearchHealth, PipelineResult
+from web_research_agent.models.schemas import SourceV2Info, SearchHealth, PipelineResult, SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +77,7 @@ def get_source_v7_info(url: str, title: str = "") -> SourceV2Info:
     if str(time.localtime().tm_year) in url or str(time.localtime().tm_year) in title:
         score += 10
 
-    return SourceV2Info(url=url, score=score, tier=tier, type=stype, rejection_reason=rej)
+    return SourceV2Info(url=url, title=title, score=score, tier=tier, type=stype, rejection_reason=rej)
 
 class SearchEngineManager:
     def __init__(self):
@@ -95,12 +95,11 @@ class SearchEngineManager:
             logger.warning(f"Search query failed '{query}': {e}")
         return results
 
-    def search(self, queries: List[str], max_results_total: int = MAX_SEARCH_RESULTS) -> PipelineResult[Tuple[List[Dict], List[SourceV2Info], Dict[str, SearchHealth]]]:
+    def search(self, queries: List[str], max_results_total: int = MAX_SEARCH_RESULTS) -> PipelineResult[SearchResult]:
         start_time = time.time()
-        found = {}
-        rejected = []
+        found: Dict[str, SourceV2Info] = {}
+        rejected: List[SourceV2Info] = []
         seen_fingerprints = set()
-        errors = []
 
         try:
             with ThreadPoolExecutor(max_workers=CONCURRENCY) as executor:
@@ -123,7 +122,7 @@ class SearchEngineManager:
                         continue
 
                     if c_url not in found:
-                        found[c_url] = {"url": c_url, "title": r.get("title", ""), "score": info.score, "tier": info.tier, "source_type": info.type}
+                        found[c_url] = info
 
             # Adaptive broad fallback if nothing found
             if not found:
@@ -137,14 +136,16 @@ class SearchEngineManager:
                         c_url = canonicalize_url(url)
                         info = get_source_v7_info(c_url, r.get("title", ""))
                         if not info.rejection_reason and c_url not in found:
-                             found[c_url] = {"url": c_url, "title": r.get("title", ""), "score": info.score - 20, "tier": 5, "source_type": "Fallback"}
+                             info.source_type = "Fallback"
+                             info.score -= 20
+                             found[c_url] = info
 
-            sorted_res = sorted(found.values(), key=lambda x: x["score"], reverse=True)
+            sorted_res = sorted(found.values(), key=lambda x: x.score, reverse=True)
             final_list = sorted_res[:max_results_total]
 
             return PipelineResult(
                 success=True,
-                payload=(final_list, rejected, self.health),
+                payload=SearchResult(scored_urls=final_list, rejected_urls=rejected, health=self.health),
                 metrics={"urls_found": len(found), "urls_rejected": len(rejected)},
                 timing=time.time() - start_time,
                 stage="search"
@@ -152,7 +153,7 @@ class SearchEngineManager:
         except Exception as e:
             return PipelineResult(success=False, errors=[str(e)], stage="search", timing=time.time() - start_time)
 
-def search_web(queries: List[str], max_results_total: int = MAX_SEARCH_RESULTS) -> PipelineResult[Tuple[List[Dict], List[SourceV2Info], Dict[str, SearchHealth]]]:
+def search_web(queries: List[str], max_results_total: int = MAX_SEARCH_RESULTS) -> PipelineResult[SearchResult]:
     if not isinstance(queries, list):
         return PipelineResult(success=False, errors=["Search queries must be a list"], stage="search")
     return SearchEngineManager().search(queries, max_results_total)

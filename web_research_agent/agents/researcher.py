@@ -55,12 +55,17 @@ class ResearchAgent:
                 # 1. Planning
                 t_plan = progress.add_task("[yellow]Strategizing...", total=100)
                 self._emit("planning_start", state)
-                state.plan = generate_research_plan(query, self.llm_client)
-                for obj in state.plan.objectives:
+                plan_res = generate_research_plan(query, self.llm_client)
+                state.plan = plan_res.payload
+                for obj in (state.plan.objectives if state.plan else []):
                     state.objective_states[obj] = ObjectiveState(objective=obj)
+
                 progress.update(t_plan, completed=100)
-                state.profiling.stages["planning"] = progress.tasks[t_plan].elapsed or 0.0
+                state.profiling.stages["planning"] = plan_res.timing
                 self._emit("planning_complete", state)
+
+                if not state.plan:
+                     raise ValueError(f"Planning failed and no fallback available: {plan_res.errors}")
 
                 # 2. Research Loop (Adaptive Autonomous Execution)
                 t_loop = progress.add_task("[green]Adaptive Cycles", total=MAX_ITERATIONS)
@@ -90,13 +95,16 @@ class ResearchAgent:
                          logger.error(f"Search failed: {search_res.errors}")
                          continue
 
-                    scored, rejected, health = search_res.payload
+                    search_out = search_res.payload
+                    scored = search_out.scored_urls
+                    rejected = search_out.rejected_urls
+                    health = search_out.health
                     state.search_health.update(health)
                     state.urls_found += (len(scored) + len(rejected))
                     state.urls_rejected.extend(rejected)
 
                     # Memory: Avoid revisiting URLs
-                    new_urls = [s["url"] for s in scored if s["url"] not in state.visited_urls and s["url"] not in state.failed_fetches]
+                    new_urls = [s.url for s in scored if s.url not in state.visited_urls and s.url not in state.failed_fetches]
                     state.sources_collected.extend([u for u in new_urls if u not in state.sources_collected])
                     state.profiling.stages[f"search_iter_{state.iterations}"] = time.time() - start_search
                     self._emit("search_complete", state)
@@ -158,13 +166,14 @@ class ResearchAgent:
                         if not sum_res.success:
                              return None
                         summary = sum_res.payload
-                        s_info = next((s for s in scored if s["url"] == url), {"score": 50, "tier": 5, "source_type": "Unknown"})
+                        s_info = next((s for s in scored if s.url == url), None)
                         return ArticleSummary(
                             url=url,
                             summary=summary,
-                            quality_score=float(s_info["score"]),
-                            source_tier=s_info["tier"],
-                            source_type=s_info["source_type"]
+                            quality_score=float(s_info.score if s_info else 50),
+                            source_tier=s_info.tier if s_info else 5,
+                            source_type=s_info.type if s_info else "Unknown",
+                            title=s_info.title if s_info else ""
                         )
 
                     with ThreadPoolExecutor(max_workers=CONCURRENCY) as executor:
