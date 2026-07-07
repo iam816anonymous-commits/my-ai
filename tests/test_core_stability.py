@@ -12,7 +12,8 @@ class TestCoreModules(unittest.TestCase):
 
     def test_confidence_logic_basic(self):
         # Test zero evidence case
-        res = calculate_production_confidence({})
+        from web_research_agent.models.schemas import ConfidenceInput
+        res = calculate_production_confidence(ConfidenceInput())
         self.assertEqual(res.overall, 0.0)
         self.assertIn("Insufficient", res.status)
 

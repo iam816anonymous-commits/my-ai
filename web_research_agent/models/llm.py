@@ -63,6 +63,13 @@ class LLMClient:
     def call(self, prompt: str, system_prompt: str = "Assistant", response_format: Optional[str] = None) -> str:
         start_time = time.time()
 
+        from web_research_agent.tools.cache import cache
+        cache_key = f"llm_call_{system_prompt}_{prompt}_{response_format}"
+        cached = cache.get(cache_key)
+        if cached:
+            logger.info("LLM cache hit.")
+            return cached
+
         try:
             kwargs = {
                 "model": self.model,
@@ -103,6 +110,8 @@ class LLMClient:
 
             latency = time.time() - start_time
             logger.info(f"LLM [{self.model}] {latency:.2f}s | P: {p_tokens}t | R: {r_tokens}t | Cost: ${cost:.6f} | Total: {self.total_prompt_tokens + self.total_completion_tokens}t")
+
+            cache.set(cache_key, content)
             return content
 
         except Exception as e:

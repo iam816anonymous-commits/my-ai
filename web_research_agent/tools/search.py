@@ -95,7 +95,7 @@ class SearchEngineManager:
             logger.warning(f"Search query failed '{query}': {e}")
         return results
 
-    def search(self, queries: List[str], max_results_total: int = MAX_SEARCH_RESULTS, original_query: str = "", llm_client: Any = None) -> PipelineResult[SearchResult]:
+    def search(self, queries: List[str], max_results_total: int = MAX_SEARCH_RESULTS, original_query: str = "") -> PipelineResult[SearchResult]:
         start_time = time.time()
         found: Dict[str, SourceV2Info] = {}
         rejected: List[SourceV2Info] = []
@@ -117,6 +117,17 @@ class SearchEngineManager:
                     seen_fingerprints.add(fp)
 
                     info = get_source_v7_info(c_url, r.get("title", ""))
+
+                    # Deterministic Keyword Boost (Phase 1)
+                    if original_query:
+                        keywords = [k.lower() for k in original_query.split() if len(k) > 3]
+                        title_lower = info.title.lower()
+                        for k in keywords:
+                            if k in title_lower:
+                                info.score += 5
+                            if k in c_url.lower():
+                                info.score += 2
+
                     if info.rejection_reason:
                         rejected.append(info)
                         continue
@@ -140,21 +151,9 @@ class SearchEngineManager:
                              info.score -= 20
                              found[c_url] = info
 
+            # Deterministic Ranking & Selection (Phase 1)
             sorted_res = sorted(found.values(), key=lambda x: x.score, reverse=True)
-
-            # Semantic Relevance Filter (Pre-fetch)
-            final_list = []
-            for info in sorted_res:
-                if len(final_list) >= max_results_total: break
-
-                if llm_client and original_query:
-                    is_relevant = self._check_semantic_relevance(info, original_query, llm_client)
-                    if not is_relevant:
-                        info.rejection_reason = "Semantic Irrelevance (Pre-fetch)"
-                        rejected.append(info)
-                        continue
-
-                final_list.append(info)
+            final_list = sorted_res[:max_results_total]
 
             return PipelineResult(
                 success=True,
@@ -166,16 +165,18 @@ class SearchEngineManager:
         except Exception as e:
             return PipelineResult(success=False, errors=[str(e)], stage="search", timing=time.time() - start_time)
 
-    def _check_semantic_relevance(self, info: SourceV2Info, query: str, llm_client: Any) -> bool:
-        """Heuristic-based semantic check to avoid fetching obviously irrelevant content."""
-        prompt = f"Query: {query}\nTitle: {info.title}\nURL: {info.url}\nIs this likely to be relevant? Answer YES or NO."
-        try:
-            res = llm_client.call(prompt, "Semantic Router").strip().upper()
-            return "YES" in res
-        except:
-            return True
-
-def search_web(queries: List[str], max_results_total: int = MAX_SEARCH_RESULTS, original_query: str = "", llm_client: Any = None) -> PipelineResult[SearchResult]:
+def search_web(queries: List[str], max_results_total: int = MAX_SEARCH_RESULTS, original_query: str = "") -> PipelineResult[SearchResult]:
     if not isinstance(queries, list):
         return PipelineResult(success=False, errors=["Search queries must be a list"], stage="search")
-    return SearchEngineManager().search(queries, max_results_total, original_query, llm_client)
+
+    from web_research_agent.tools.cache import cache
+    cache_key = f"search_{queries}_{max_results_total}_{original_query}"
+    cached = cache.get(cache_key)
+    if cached:
+        logger.info("Search cache hit.")
+        return PipelineResult(success=True, payload=SearchResult.model_validate(cached), stage="search")
+
+    res = SearchEngineManager().search(queries, max_results_total, original_query)
+    if res.success:
+        cache.set(cache_key, res.payload.model_dump())
+    return res

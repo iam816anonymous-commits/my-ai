@@ -262,6 +262,14 @@ class ResearchReport(BaseModel):
     references: List[str]
     further_reading: List[str]
 
+class BatchArticleSummary(BaseModel):
+    url: str
+    summary: str
+    evidence_strength: str
+
+class BatchSummaryResult(BaseModel):
+    summaries: List[BatchArticleSummary]
+
 class BenchmarkMetrics(BaseModel):
     query: str
     category: str

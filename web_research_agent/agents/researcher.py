@@ -44,9 +44,9 @@ class ResearchAgent:
                 logger.error(f"Progress callback error: {e}")
 
     def run(self, query: str) -> Tuple[ResearchState, SelfEvaluation]:
+        avg_cov = 0.0
         state = ResearchState(query=query, report_id=storage.generate_report_id())
         evaluation = SelfEvaluation(overall_grade="U", justification="Research not completed")
-        avg_cov = 0.0
 
         console.print(f"[bold blue]Production Research Platform[/bold blue] | ID: [magenta]{state.report_id}[/magenta]")
 
@@ -104,7 +104,7 @@ class ResearchAgent:
                     fresh_queries = curr_queries
 
                     start_search = time.time()
-                    search_res = search_web(fresh_queries, MAX_SEARCH_RESULTS, state.query, self.llm_client)
+                    search_res = search_web(fresh_queries, MAX_SEARCH_RESULTS, state.query)
                     if not search_res.success:
                          logger.error(f"Search failed: {search_res.errors}")
                          continue
@@ -156,7 +156,7 @@ class ResearchAgent:
                             state.failed_fetches.append(url)
                             state.failed_downloads += 1
 
-                    extract_res = extract_all({u: h for u, h in fetch_res.html_map.items() if h}, state.query, self.llm_client)
+                    extract_res = extract_all({u: h for u, h in fetch_res.html_map.items() if h}, state.query)
                     if not extract_res.success:
                          logger.error(f"Extraction failed: {extract_res.errors}")
                          continue
@@ -169,30 +169,30 @@ class ResearchAgent:
                     state.profiling.stages[f"fetch_iter_{state.iterations}"] = time.time() - start_fetch
                     self._emit("fetch_complete", state)
 
-                    # Summarize (Parallel)
-                    progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Parallel Summarization...")
+                    # Summarize (Batch - Phase 3)
+                    progress.update(t_loop, description=f"[green]Cycle {state.iterations}: Batch Summarization...")
                     state.report_status = "summarizing"
                     self._emit("summarize_start", state)
-                    from concurrent.futures import ThreadPoolExecutor
 
-                    def summarize_and_score(url, text):
-                        sum_res = summarize_article(text, self.llm_client, state.query)
-                        if not sum_res.success:
-                             return None
-                        summary = sum_res.payload
-                        s_info = next((s for s in scored if s.url == url), None)
-                        return ArticleSummary(
-                            url=url,
-                            summary=summary,
-                            quality_score=float(s_info.score if s_info else 50),
-                            source_tier=s_info.tier if s_info else 5,
-                            source_type=s_info.type if s_info else "Unknown",
-                            title=s_info.title if s_info else ""
-                        )
+                    from web_research_agent.tools.summarizer import batch_summarize_documents
 
-                    with ThreadPoolExecutor(max_workers=CONCURRENCY) as executor:
-                        results = list(executor.map(lambda x: summarize_and_score(*x), valid_texts.items()))
-                        iteration_summaries = [r for r in results if r is not None]
+                    # Prepare batch (Top-K extracted documents)
+                    docs_to_summarize = [{"url": u, "text": t} for u, t in valid_texts.items()]
+
+                    sum_res = batch_summarize_documents(docs_to_summarize, self.llm_client, state.query)
+                    iteration_summaries = []
+
+                    if sum_res.success:
+                        for b_sum in sum_res.payload:
+                            s_info = next((s for s in scored if s.url == b_sum.url), None)
+                            iteration_summaries.append(ArticleSummary(
+                                url=b_sum.url,
+                                summary=b_sum.summary,
+                                quality_score=float(s_info.score if s_info else 50),
+                                source_tier=s_info.tier if s_info else 5,
+                                source_type=s_info.type if s_info else "Unknown",
+                                title=s_info.title if s_info else ""
+                            ))
 
                     for s in iteration_summaries:
                         logger.info(f"Pipeline Trace [{state.report_id}]: Summary generated for {s.url}")
@@ -248,15 +248,15 @@ class ResearchAgent:
                 self._emit("synthesis_start", state)
                 final_content = generate_final_report(state, state.plan, self.llm_client)
 
-                # Validation
+                # Validation (Deterministic - Phase 5)
                 progress.update(t_report, description="[cyan]Validating Completeness...")
                 state.report_status = "validating"
-                completeness = validate_objective_completeness(final_content, state.plan.objectives, self.llm_client)
+                completeness = validate_objective_completeness(final_content, state.plan.objectives, state)
                 for obj, status in completeness.items():
                     if status == "NO" and state.objective_states[obj].status == ObjectiveStatus.COMPLETE:
                          state.objective_states[obj].status = ObjectiveStatus.INSUFFICIENT_EVIDENCE
 
-                evaluation = run_self_evaluation(final_content, state.plan, self.llm_client)
+                evaluation = run_self_evaluation(final_content, state.plan, state)
                 export_report(final_content, state.plan, state, storage)
                 storage.update_index({"id": state.report_id, "query": query, "created_at": datetime.now().isoformat(), "confidence": state.confidence_breakdown.overall, "coverage": round(avg_cov, 1), "grade": evaluation.overall_grade, "runtime": str(datetime.now() - state.start_time).split('.')[0], "report": f"reports/{state.report_id}.md", "trace": f"traces/{state.report_id}.md"})
                 progress.update(t_report, completed=100)
