@@ -6,29 +6,29 @@ from datetime import datetime
 from web_research_agent.models.llm import LLMClient
 from web_research_agent.models.schemas import (
     ArticleSummary, ResearchPlan, Contradiction,
-    EvidenceItem, ResearchReport, ConfidenceBreakdown, ResearchGap, SelfEvaluation
+    EvidenceItem, ResearchReport, ConfidenceBreakdown, ResearchGap, SelfEvaluation, ResearchState
 )
 from web_research_agent.config import OUTPUT_DIR, EXPORT_FORMATS
 
 logger = logging.getLogger(__name__)
 
 def generate_final_report(
-    state_data: Dict, plan: ResearchPlan, llm_client: LLMClient
+    state: ResearchState, plan: ResearchPlan, llm_client: LLMClient
 ) -> str:
     """Synthesizes high-fidelity analyst-grade report from Knowledge Base (Module 14)."""
-    kb = state_data.get("knowledge_base", [])
-    summaries = state_data.get("summaries", [])
-    confidence = state_data.get("confidence_breakdown")
+    kb = state.knowledge_base
+    summaries = state.summaries
+    confidence = state.confidence_breakdown
 
     if not kb:
         return "# Research Report: Evidence Deficiency\n\nNo evidence was successfully extracted during this research session.\n\n## Reason\nPossible extraction or semantic validation failure. Check pipeline diagnostics."
 
     evidence_text = ""
     for i, entry in enumerate(kb, 1):
-        doc = entry.get("document")
+        doc = entry.document
         if doc:
-            evidence_text += f"SOURCE [{i}]: {doc.get('url')} ({doc.get('domain')})\n"
-            evidence_text += f"SUMMARY: {doc.get('summary')}\n\n"
+            evidence_text += f"SOURCE [{i}]: {doc.url} ({doc.domain})\n"
+            evidence_text += f"SUMMARY: {doc.summary}\n\n"
 
     prompt = f"""
     TOPIC: {plan.topic} | INTENT: {plan.intent}
@@ -100,20 +100,11 @@ class DateTimeEncoder(json.JSONEncoder):
              return obj.isoformat()
         return super().default(obj)
 
-def export_report(content: str, plan: ResearchPlan, state_data: Dict, storage):
-    rid = state_data.get("report_id", "latest")
+def export_report(content: str, plan: ResearchPlan, state: ResearchState, storage):
+    rid = state.report_id or "latest"
 
     # Prepare data for JSON export, ensuring datetime serialization
-    def serialize(obj):
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        if isinstance(obj, list):
-            return [serialize(i) for i in obj]
-        if isinstance(obj, dict):
-            return {k: serialize(v) for k, v in obj.items()}
-        return obj
-
-    clean_state = serialize(state_data)
+    clean_state = state.model_dump(mode='json')
 
     # Individual success for each export
     try: storage.save_artifact(rid, "report", content, "md")

@@ -33,20 +33,7 @@ def generate_research_plan(query: str, llm_client: LLMClient) -> PipelineResult[
     """
 
     try:
-        data = llm_client.get_json(prompt, sys_prompt)
-
-        # Ensure intent is a valid QueryIntent
-        intent_str = data.get("intent", "General").upper()
-        try:
-            intent = QueryIntent[intent_str]
-        except KeyError:
-            # Fallback for common mismatches
-            if "TECH" in intent_str: intent = QueryIntent.TECHNOLOGY
-            elif "SECURITY" in intent_str: intent = QueryIntent.CYBERSECURITY
-            else: intent = QueryIntent.GENERAL
-
-        data["intent"] = intent
-        plan = ResearchPlan(**data)
+        plan = llm_client.get_json(prompt, sys_prompt, response_model=ResearchPlan)
         return PipelineResult(
             success=True,
             payload=plan,

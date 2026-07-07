@@ -70,14 +70,29 @@ class ResearchAgent:
                 # 2. Research Loop (Adaptive Autonomous Execution)
                 t_loop = progress.add_task("[green]Adaptive Cycles", total=MAX_ITERATIONS)
                 while state.iterations < MAX_ITERATIONS:
+                    # Adaptive stopping check
+                    if state.iterations > 0 and state.objective_states:
+                        avg_cov = sum(o.coverage for o in state.objective_states.values()) / len(state.objective_states)
+                        if avg_cov >= 85.0 and state.confidence_breakdown.overall >= 85.0:
+                             logger.info("Adaptive Stopping: Coverage and Confidence thresholds met.")
+                             break
+
                     state.iterations += 1
 
                     # Live Research Dashboard Stats
                     active_obj = [o for o in state.objective_states.values() if o.status != ObjectiveStatus.COMPLETE]
-                    completed_count = len(state.objective_states) - len(active_obj)
+                    if not active_obj and state.iterations > 1:
+                        logger.info("All objectives complete.")
+                        break
 
                     self._emit("iteration_start", state)
-                    curr_queries = state.plan.queries if state.iterations == 1 else state.follow_up_queries
+
+                    # Target only missing objectives
+                    if state.iterations == 1:
+                        curr_queries = state.plan.queries
+                    else:
+                        curr_queries = state.follow_up_queries
+
                     if not curr_queries: break
 
                     # Search (Avoid redundant queries)
@@ -86,8 +101,7 @@ class ResearchAgent:
                     self._emit("search_start", state)
 
                     # Filter out queries we've tried too many times
-                    fresh_queries = [q for q in curr_queries if q not in state.follow_up_queries or state.iterations < 2]
-                    if not fresh_queries: fresh_queries = curr_queries[:2]
+                    fresh_queries = curr_queries
 
                     start_search = time.time()
                     search_res = search_web(fresh_queries, MAX_SEARCH_RESULTS)
@@ -127,11 +141,11 @@ class ResearchAgent:
                     state.report_status = "fetching"
                     self._emit("fetch_start", state)
                     start_fetch = time.time()
-                    html_map, latency = fetch_all(new_urls, CONCURRENCY)
-                    state.profiling.http_latency += latency
+                    fetch_res = fetch_all(new_urls, CONCURRENCY)
+                    state.profiling.http_latency += fetch_res.total_latency
 
                     # Update Memory & Trace
-                    for url, html in html_map.items():
+                    for url, html in fetch_res.html_map.items():
                         logger.info(f"Pipeline Trace [{state.report_id}]: URL discovered: {url}")
                         if html:
                             logger.info(f"Pipeline Trace [{state.report_id}]: URL fetched successfully: {url}")
@@ -142,13 +156,13 @@ class ResearchAgent:
                             state.failed_fetches.append(url)
                             state.failed_downloads += 1
 
-                    extract_res = extract_all({u: h for u, h in html_map.items() if h}, state.query, self.llm_client)
+                    extract_res = extract_all({u: h for u, h in fetch_res.html_map.items() if h}, state.query, self.llm_client)
                     if not extract_res.success:
                          logger.error(f"Extraction failed: {extract_res.errors}")
                          continue
 
-                    texts_map = extract_res.payload
-                    valid_texts = {u: t for u, t in texts_map.items() if t}
+                    ext_out = extract_res.payload
+                    valid_texts = {u: t for u, t in ext_out.texts_map.items() if t}
                     for u in valid_texts:
                          logger.info(f"Pipeline Trace [{state.report_id}]: Content extracted and validated: {u}")
                     state.successful_extractions += len(valid_texts)
@@ -215,7 +229,8 @@ class ResearchAgent:
                     self._emit("reasoning_complete", state)
 
                     progress.update(t_loop, advance=1)
-                    avg_cov = sum(o.coverage for o in state.objective_states.values()) / len(state.objective_states)
+                    if state.objective_states:
+                        avg_cov = sum(o.coverage for o in state.objective_states.values()) / len(state.objective_states)
 
                     # Autonomous Stopping Decision (Final Decision Step)
                     if not res.continue_research:
@@ -231,7 +246,7 @@ class ResearchAgent:
                 t_report = progress.add_task("[cyan]Synthesis...", total=100)
                 state.report_status = "synthesizing"
                 self._emit("synthesis_start", state)
-                final_content = generate_final_report(state.model_dump(), state.plan, self.llm_client)
+                final_content = generate_final_report(state, state.plan, self.llm_client)
 
                 # Validation
                 progress.update(t_report, description="[cyan]Validating Completeness...")
@@ -242,7 +257,7 @@ class ResearchAgent:
                          state.objective_states[obj].status = ObjectiveStatus.INSUFFICIENT_EVIDENCE
 
                 evaluation = run_self_evaluation(final_content, state.plan, self.llm_client)
-                export_report(final_content, state.plan, state.model_dump(), storage)
+                export_report(final_content, state.plan, state, storage)
                 storage.update_index({"id": state.report_id, "query": query, "created_at": datetime.now().isoformat(), "confidence": state.confidence_breakdown.overall, "coverage": round(avg_cov, 1), "grade": evaluation.overall_grade, "runtime": str(datetime.now() - state.start_time).split('.')[0], "report": f"reports/{state.report_id}.md", "trace": f"traces/{state.report_id}.md"})
                 progress.update(t_report, completed=100)
                 self._emit("synthesis_complete", state)

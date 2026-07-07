@@ -56,7 +56,9 @@ async def fetch_url_async(session: aiohttp.ClientSession, url: str, attempt: int
         logger.warning(f"Async fetch failed for {url}: {e}")
         return url, "", time.time() - start
 
-async def fetch_all_async(urls: List[str]) -> Tuple[Dict[str, str], float]:
+from web_research_agent.models.schemas import FetchResult
+
+async def fetch_all_async(urls: List[str]) -> FetchResult:
     """Parallel downloads with total latency tracking."""
     connector = aiohttp.TCPConnector(limit=CONCURRENCY)
     total_http_latency = 0.0
@@ -67,21 +69,24 @@ async def fetch_all_async(urls: List[str]) -> Tuple[Dict[str, str], float]:
         for url, content, lat in responses:
             results[url] = content
             total_http_latency += lat
-        return results, total_http_latency
+        return FetchResult(html_map=results, total_latency=total_http_latency)
 
-def fetch_all(urls: List[str], max_workers: int = CONCURRENCY) -> Tuple[Dict[str, str], float]:
+def fetch_all(urls: List[str], max_workers: int = CONCURRENCY) -> FetchResult:
     # Production stability: manage loop lifecycle
     try:
         loop = asyncio.get_running_loop()
+        if loop.is_running():
+            # If called from async context, we need to run it differently
+            # but Researcher.run is sync (running in a thread), so this shouldn't happen
+            # unless the test itself is async and calls it.
+            import nest_asyncio
+            nest_asyncio.apply()
+            return loop.run_until_complete(fetch_all_async(urls))
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
-    try:
-        return loop.run_until_complete(fetch_all_async(urls))
-    finally:
-        # Avoid closing loop here as it might be managed externally in CLI/API
-        pass
+    return loop.run_until_complete(fetch_all_async(urls))
 
 def extract_text_from_pdf(content: bytes) -> str:
     try:

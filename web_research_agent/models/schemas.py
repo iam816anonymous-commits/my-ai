@@ -152,6 +152,13 @@ class ConfidenceBreakdown(BaseModel):
     status: str = "Active"
     reason: str = ""
 
+class ConfidenceInput(BaseModel):
+    objective_states: List[ObjectiveState] = Field(default_factory=list)
+    summaries: List[ArticleSummary] = Field(default_factory=list)
+    contradictions: List[Contradiction] = Field(default_factory=list)
+    evidence_count: int = 0
+    iterations: int = 1
+
 class ResearchGap(BaseModel):
     topic: str
     reason_missing: str = ""
@@ -164,7 +171,7 @@ class ReasoningResult(BaseModel):
     contradictions: List[Contradiction] = Field(default_factory=list)
     confidence_breakdown: ConfidenceBreakdown = Field(default_factory=ConfidenceBreakdown)
     follow_up_queries: List[str] = Field(default_factory=list)
-    continue_research: bool
+    continue_research: bool = True
     evidence_items: List[EvidenceItem] = Field(default_factory=list)
     gaps: List[ResearchGap] = Field(default_factory=list)
 
