@@ -104,7 +104,7 @@ class ResearchAgent:
                     fresh_queries = curr_queries
 
                     start_search = time.time()
-                    search_res = search_web(fresh_queries, MAX_SEARCH_RESULTS)
+                    search_res = search_web(fresh_queries, MAX_SEARCH_RESULTS, state.query, self.llm_client)
                     if not search_res.success:
                          logger.error(f"Search failed: {search_res.errors}")
                          continue
