@@ -33,20 +33,7 @@ def generate_research_plan(query: str, llm_client: LLMClient) -> PipelineResult[
     """
 
     try:
-        data = llm_client.get_json(prompt, sys_prompt)
-
-        # Ensure intent is a valid QueryIntent
-        intent_str = data.get("intent", "General").upper()
-        try:
-            intent = QueryIntent[intent_str]
-        except KeyError:
-            # Fallback for common mismatches
-            if "TECH" in intent_str: intent = QueryIntent.TECHNOLOGY
-            elif "SECURITY" in intent_str: intent = QueryIntent.CYBERSECURITY
-            else: intent = QueryIntent.GENERAL
-
-        data["intent"] = intent
-        plan = ResearchPlan(**data)
+        plan = llm_client.get_json(prompt, sys_prompt, response_model=ResearchPlan)
         return PipelineResult(
             success=True,
             payload=plan,
@@ -55,11 +42,26 @@ def generate_research_plan(query: str, llm_client: LLMClient) -> PipelineResult[
         )
     except Exception as e:
         logger.error(f"Planning failed: {e}")
+        # Deterministic Fallback Plan (Phase 5)
         fallback_plan = ResearchPlan(
             topic=query,
             intent=QueryIntent.GENERAL,
-            objectives=[f"General overview of {query}", "Key stakeholders", "Current status", "Challenges", "Future outlook"],
-            queries=[query, f"{query} details", f"{query} analysis", f"{query} research"]
+            objectives=[
+                f"Historical context and origins of {query}",
+                f"Core components and internal mechanics of {query}",
+                f"Major stakeholders and influential entities in the field of {query}",
+                f"Current market trends and real-world applications of {query}",
+                f"Primary challenges, risks, and controversies surrounding {query}",
+                f"Future outlook and emerging developments for {query}"
+            ],
+            queries=[
+                query,
+                f"history and development of {query}",
+                f"technical specifications and components of {query}",
+                f"top organizations and leaders in {query}",
+                f"market analysis and case studies for {query}",
+                f"challenges and future trends of {query}"
+            ]
         )
         return PipelineResult(
             success=False,

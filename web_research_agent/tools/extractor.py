@@ -8,7 +8,7 @@ from typing import List, Dict, Optional, Any
 from concurrent.futures import ThreadPoolExecutor
 from web_research_agent.config import MAX_ARTICLE_CHARS, CONCURRENCY
 from web_research_agent.tools.cache import cache
-from web_research_agent.models.schemas import PipelineResult
+from web_research_agent.models.schemas import PipelineResult, ExtractionResult
 
 logger = logging.getLogger(__name__)
 
@@ -127,8 +127,7 @@ def extract_all(html_contents: Dict[str, str], query: str = "", llm_client = Non
 
         return PipelineResult(
             success=True,
-            payload=results,
-            metrics={"extracted": valid_count, "rejected": rejected_count},
+            payload=ExtractionResult(texts_map=results, valid_count=valid_count, rejected_count=rejected_count),
             timing=time.time() - start_time,
             stage="extraction"
         )

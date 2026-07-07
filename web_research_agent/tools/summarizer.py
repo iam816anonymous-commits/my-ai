@@ -8,7 +8,7 @@ from web_research_agent.config import MAX_SUMMARY_WORDS
 
 logger = logging.getLogger(__name__)
 
-def summarize_article(text: str, llm_client: LLMClient, query: str = "") -> PipelineResult[str]:
+def summarize_article(text: str, llm_client: LLMClient, query: str = "", url: str = "") -> PipelineResult[str]:
     """
     Summarizes article while explicitly extracting evidence (Claims, Stats, Entities).
     """
@@ -19,6 +19,7 @@ def summarize_article(text: str, llm_client: LLMClient, query: str = "") -> Pipe
     sys_prompt = "Senior Research Analyst. Extract precise claims, statistics, dates, and evidence. Format as Markdown."
     prompt = f"""
     Research Query: {query}
+    URL: {url}
     Content: {text[:4000]}
 
     TASK:
@@ -38,10 +39,8 @@ def summarize_article(text: str, llm_client: LLMClient, query: str = "") -> Pipe
             success=True,
             payload=content,
             stage="summarization",
-            timing=time.time() - start_time,
-            metrics={"char_count": len(content)}
+            timing=time.time() - start_time
         )
     except Exception as e:
         logger.warning(f"LLM Summarization failed: {e}")
-        # Local Fallback would go here if required, but for high quality we prefer failure over junk
         return PipelineResult(success=False, errors=[str(e)], stage="summarization", timing=time.time() - start_time)

@@ -114,12 +114,39 @@ class LLMClient:
                 raise LLMRateLimitError(str(e))
             raise e
 
-    def get_json(self, prompt: str, system_prompt: str = "Return JSON.") -> Dict[str, Any]:
+    def get_json(self, prompt: str, system_prompt: str = "Return JSON.", response_model: Optional[Any] = None) -> Any:
+        """
+        Retrieves JSON from LLM and optionally validates it against a Pydantic model.
+        Includes an auto-repair loop.
+        """
         content = self.call(prompt, system_prompt, response_format="json")
-        try: return self._parse_json_robustly(content)
-        except:
-             content = self.call(prompt + " Output valid JSON.", system_prompt)
-             return self._parse_json_robustly(content)
+        try:
+            data = self._parse_json_robustly(content)
+            if response_model:
+                return response_model.model_validate(data)
+            return data
+        except Exception as e:
+            logger.warning(f"Initial JSON/Pydantic validation failed: {e}. Attempting repair...")
+            repair_prompt = f"""
+            The previous response was invalid.
+            ERROR: {str(e)}
+            ORIGINAL RESPONSE: {content}
+
+            Please provide the corrected JSON that strictly follows the required schema.
+            """
+            repair_content = self.call(repair_prompt, system_prompt, response_format="json")
+            try:
+                data = self._parse_json_robustly(repair_content)
+                if response_model:
+                    return response_model.model_validate(data)
+                return data
+            except Exception as e2:
+                logger.error(f"JSON repair failed: {e2}")
+                if response_model:
+                    # Return a default instance if possible, or re-raise
+                    try: return response_model()
+                    except: raise e2
+                raise e2
 
     def summarize(self, text: str) -> str:
         """Compatibility wrapper for summarizer and extractor."""

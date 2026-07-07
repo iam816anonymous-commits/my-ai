@@ -6,41 +6,35 @@ from urllib.parse import urlparse
 from web_research_agent.models.llm import LLMClient
 from web_research_agent.models.schemas import (
     ReasoningResult, ArticleSummary, ResearchPlan,
-    KnowledgeBaseEntry, EvidenceItem, ConfidenceBreakdown, ResearchGap, ObjectiveState, ObjectiveStatus, PipelineResult
+    KnowledgeBaseEntry, EvidenceItem, ConfidenceBreakdown, ResearchGap, ObjectiveState, ObjectiveStatus, PipelineResult, ConfidenceInput
 )
 
 logger = logging.getLogger(__name__)
 
-def calculate_production_confidence(state_data: Dict) -> ConfidenceBreakdown:
+def calculate_production_confidence(inp: ConfidenceInput) -> ConfidenceBreakdown:
     """Redesigned strictly signal-based confidence engine."""
-    obj_states = state_data.get("objective_states", {})
-    summaries = state_data.get("summaries", [])
-    contradictions = state_data.get("contradictions", [])
-
-    if not summaries or not obj_states:
+    if not inp.summaries or not inp.objective_states:
         return ConfidenceBreakdown(overall=0.0, status="Insufficient Data", reason="Evidence or Objectives missing")
 
     # 1. Coverage (40%) - Measurable objective completion
-    avg_coverage = sum(o.get("coverage", 0) for o in obj_states.values()) / len(obj_states)
+    avg_coverage = sum(o.coverage for o in inp.objective_states) / len(inp.objective_states)
 
     # 2. Source Authority & Diversity (20%)
-    unique_domains = set(urlparse(s.get("url", "")).netloc for s in summaries if s.get("url"))
+    unique_domains = set(urlparse(s.url).netloc for s in inp.summaries if s.url)
     domain_diversity = min(len(unique_domains) / 6.0, 1.0) * 100 # Target 6+ domains
 
     # Tier 1 & 2 weight
-    high_authority_count = len([s for s in summaries if s.get("source_tier", 5) <= 2])
+    high_authority_count = len([s for s in inp.summaries if s.source_tier <= 2])
     authority_score = min(high_authority_count / 4.0, 1.0) * 100 # Target 4+ high-authority sources
 
     # 3. Evidence Density & Agreement (25%)
-    evidence_count = state_data.get("evidence_count", len(summaries))
-    density_score = min(evidence_count / 15.0, 1.0) * 100 # Target 15+ evidence items
+    density_score = min(inp.evidence_count / 15.0, 1.0) * 100 # Target 15+ evidence items
 
     # Agreement (deduct for contradictions)
-    agreement_score = max(0, 100 - (len(contradictions) * 15))
+    agreement_score = max(0, 100 - (len(inp.contradictions) * 15))
 
     # 4. Search Exhaustiveness (15%)
-    iterations = state_data.get("iterations", 1)
-    exhaustiveness = min((iterations / 3.0), 1.0) * 100 # Target 3 cycles
+    exhaustiveness = min((inp.iterations / 3.0), 1.0) * 100 # Target 3 cycles
 
     # Weighted Sum
     overall = (avg_coverage * 0.40) + \
@@ -113,47 +107,30 @@ def evaluate_research(query: str, plan: ResearchPlan, summaries: List[ArticleSum
     """
 
     try:
-        data = llm_client.get_json(prompt, "Expert Research Analyst. JSON only.")
+        result = llm_client.get_json(prompt, "Expert Research Analyst. JSON only.", response_model=ReasoningResult)
 
+        # Post-process to ensure attempts are tracked and confidence is calculated
         res_states = []
         total_evidence = 0
-        for obj_data in data.get("objective_states", []):
-            obj_name = obj_data["objective"]
-            prev = previous_states.get(obj_name) if previous_states else None
-            status_str = obj_data.get("status", "SEARCHING").upper()
-            status = ObjectiveStatus[status_str] if status_str in ObjectiveStatus.__members__ else ObjectiveStatus.SEARCHING
+        for obj in result.objective_states:
+            prev = previous_states.get(obj.objective) if previous_states else None
+            obj.search_attempts = (prev.search_attempts if prev else 0) + 1
+            obj.last_update_iteration = current_iteration
+            total_evidence += obj.evidence_count
+            res_states.append(obj)
 
-            attempts = (prev.search_attempts if prev else 0) + 1
-            total_evidence += obj_data.get("evidence_count", 0)
+        result.objective_states = res_states
 
-            res_states.append(ObjectiveState(
-                objective=obj_name,
-                status=status,
-                coverage=obj_data.get("coverage", 0.0),
-                evidence_count=obj_data.get("evidence_count", 0),
-                number_of_sources=obj_data.get("number_of_sources", 0),
-                missing_evidence=obj_data.get("missing_evidence", ""),
-                search_attempts=attempts,
-                last_update_iteration=current_iteration
-            ))
-
-        confidence = calculate_production_confidence({
-            "objective_states": {o.objective: o.model_dump() for o in res_states},
-            "summaries": [s.model_dump() for s in summaries],
-            "contradictions": data.get("contradictions", []),
-            "evidence_count": total_evidence,
-            "iterations": current_iteration
-        })
-
-        result = ReasoningResult(
+        confidence = calculate_production_confidence(ConfidenceInput(
             objective_states=res_states,
-            contradictions=data.get("contradictions", []),
-            evidence_items=data.get("evidence_items", []),
-            gaps=data.get("gaps", []),
-            follow_up_queries=data.get("follow_up_queries", []),
-            continue_research=data.get("continue_research", True) and current_iteration < 3,
-            confidence_breakdown=confidence
-        )
+            summaries=summaries,
+            contradictions=result.contradictions,
+            evidence_count=total_evidence,
+            iterations=current_iteration
+        ))
+
+        result.confidence_breakdown = confidence
+        result.continue_research = result.continue_research and current_iteration < 3
 
         return PipelineResult(success=True, payload=result, stage="reasoning", timing=time.time() - start_time)
     except Exception as e:

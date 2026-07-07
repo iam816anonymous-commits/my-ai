@@ -95,7 +95,7 @@ class SearchEngineManager:
             logger.warning(f"Search query failed '{query}': {e}")
         return results
 
-    def search(self, queries: List[str], max_results_total: int = MAX_SEARCH_RESULTS) -> PipelineResult[SearchResult]:
+    def search(self, queries: List[str], max_results_total: int = MAX_SEARCH_RESULTS, original_query: str = "", llm_client: Any = None) -> PipelineResult[SearchResult]:
         start_time = time.time()
         found: Dict[str, SourceV2Info] = {}
         rejected: List[SourceV2Info] = []
@@ -141,7 +141,20 @@ class SearchEngineManager:
                              found[c_url] = info
 
             sorted_res = sorted(found.values(), key=lambda x: x.score, reverse=True)
-            final_list = sorted_res[:max_results_total]
+
+            # Semantic Relevance Filter (Pre-fetch)
+            final_list = []
+            for info in sorted_res:
+                if len(final_list) >= max_results_total: break
+
+                if llm_client and original_query:
+                    is_relevant = self._check_semantic_relevance(info, original_query, llm_client)
+                    if not is_relevant:
+                        info.rejection_reason = "Semantic Irrelevance (Pre-fetch)"
+                        rejected.append(info)
+                        continue
+
+                final_list.append(info)
 
             return PipelineResult(
                 success=True,
@@ -153,7 +166,16 @@ class SearchEngineManager:
         except Exception as e:
             return PipelineResult(success=False, errors=[str(e)], stage="search", timing=time.time() - start_time)
 
-def search_web(queries: List[str], max_results_total: int = MAX_SEARCH_RESULTS) -> PipelineResult[SearchResult]:
+    def _check_semantic_relevance(self, info: SourceV2Info, query: str, llm_client: Any) -> bool:
+        """Heuristic-based semantic check to avoid fetching obviously irrelevant content."""
+        prompt = f"Query: {query}\nTitle: {info.title}\nURL: {info.url}\nIs this likely to be relevant? Answer YES or NO."
+        try:
+            res = llm_client.call(prompt, "Semantic Router").strip().upper()
+            return "YES" in res
+        except:
+            return True
+
+def search_web(queries: List[str], max_results_total: int = MAX_SEARCH_RESULTS, original_query: str = "", llm_client: Any = None) -> PipelineResult[SearchResult]:
     if not isinstance(queries, list):
         return PipelineResult(success=False, errors=["Search queries must be a list"], stage="search")
-    return SearchEngineManager().search(queries, max_results_total)
+    return SearchEngineManager().search(queries, max_results_total, original_query, llm_client)
