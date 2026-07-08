@@ -83,19 +83,25 @@ def extract_text_v2(html: str) -> str:
         logger.error(f"Extraction error: {e}")
         return ""
 
-def validate_semantic_relevance(text: str, query: str, llm_client) -> bool:
-    """Verifies if the extracted text is relevant to the research query."""
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+def validate_semantic_relevance_deterministic(text: str, query: str) -> bool:
+    """Deterministic semantic check using TF-IDF and Cosine Similarity (Phase 2)."""
     if not text or not query: return False
 
-    prompt = f"Query: {query}\n\nContent Fragment: {text[:800]}\n\nIs this content semantically relevant to the query? Answer ONLY 'YES' or 'NO'."
     try:
-        response = llm_client.summarize(prompt).strip().upper()
-        return "YES" in response
-    except Exception as e:
-        logger.warning(f"Semantic validation error: {e}")
-        return True # Default to true on LLM error to avoid data loss
+        vectorizer = TfidfVectorizer(stop_words='english')
+        tfidf = vectorizer.fit_transform([query, text])
+        similarity = cosine_similarity(tfidf[0:1], tfidf[1:2])[0][0]
 
-def extract_all(html_contents: Dict[str, str], query: str = "", llm_client = None) -> PipelineResult[Dict[str, str]]:
+        # Threshold for relevance. 0.05 is conservative but helps filter complete junk
+        return similarity > 0.05
+    except Exception as e:
+        logger.warning(f"Deterministic semantic validation error: {e}")
+        return True
+
+def extract_all(html_contents: Dict[str, str], query: str = "") -> PipelineResult[Dict[str, str]]:
     """Parallel extraction with stage metrics and validation."""
     start_time = time.time()
     results = {}
@@ -110,9 +116,9 @@ def extract_all(html_contents: Dict[str, str], query: str = "", llm_client = Non
                 try:
                     text = future.result()
                     if text:
-                        if query and llm_client:
-                            if not validate_semantic_relevance(text, query, llm_client):
-                                logger.info(f"Rejected irrelevant content: {url}")
+                        if query:
+                            if not validate_semantic_relevance_deterministic(text, query):
+                                logger.info(f"Rejected irrelevant content deterministically: {url}")
                                 rejected_count += 1
                                 results[url] = ""
                                 continue

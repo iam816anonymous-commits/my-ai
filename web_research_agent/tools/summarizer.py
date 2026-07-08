@@ -9,38 +9,56 @@ from web_research_agent.config import MAX_SUMMARY_WORDS
 logger = logging.getLogger(__name__)
 
 def summarize_article(text: str, llm_client: LLMClient, query: str = "", url: str = "") -> PipelineResult[str]:
+    """Compatibility wrapper for individual article summarization."""
+    return batch_summarize_documents([{"url": url, "text": text}], llm_client, query)
+
+def batch_summarize_documents(documents: List[Dict[str, str]], llm_client: LLMClient, query: str = "") -> PipelineResult[List[Dict[str, str]]]:
     """
-    Summarizes article while explicitly extracting evidence (Claims, Stats, Entities).
+    Summarizes multiple documents in a single LLM call to save tokens and reduce latency (Phase 3).
     """
     start_time = time.time()
-    if not text:
-        return PipelineResult(success=False, errors=["Empty text provided"], stage="summarization")
+    if not documents:
+        return PipelineResult(success=False, errors=["No documents provided"], stage="summarization")
 
-    sys_prompt = "Senior Research Analyst. Extract precise claims, statistics, dates, and evidence. Format as Markdown."
+    # Limit context size per document to ensure batch fits in window
+    # Target 3-5 documents per batch
+    batch_content = ""
+    for i, doc in enumerate(documents, 1):
+        batch_content += f"DOCUMENT {i} (URL: {doc['url']}):\n{doc['text'][:3000]}\n\n"
+
+    sys_prompt = "Senior Research Analyst. Extract precise claims, statistics, dates, and evidence from multiple sources. Output structured JSON."
     prompt = f"""
     Research Query: {query}
-    URL: {url}
-    Content: {text[:4000]}
+
+    {batch_content}
 
     TASK:
-    1. Extract key claims and statistics with supporting context.
-    2. Identify core findings, numbers, and limitations.
-    3. Summarize the main topic in 150-250 words.
+    Analyze the documents above and extract key findings for each.
+    Return a JSON object with a 'summaries' list.
+    Each item must have:
+    - url: The document URL
+    - summary: A 150-250 word synthesis of findings, claims, and stats.
+    - evidence_strength: Strong, Moderate, or Weak.
 
-    If no meaningful research evidence exists, return 'NO_EVIDENCE_FOUND'.
+    JSON format:
+    {{
+      "summaries": [
+        {{ "url": "...", "summary": "...", "evidence_strength": "..." }},
+        ...
+      ]
+    }}
     """
 
     try:
-        content = llm_client.call(prompt, sys_prompt)
-        if "NO_EVIDENCE_FOUND" in content or len(content) < 100:
-             return PipelineResult(success=False, errors=["No meaningful research evidence found in article"], stage="summarization", timing=time.time() - start_time)
+        from web_research_agent.models.schemas import BatchSummaryResult
+        data = llm_client.get_json(prompt, sys_prompt, response_model=BatchSummaryResult)
 
         return PipelineResult(
             success=True,
-            payload=content,
+            payload=data.summaries,
             stage="summarization",
             timing=time.time() - start_time
         )
     except Exception as e:
-        logger.warning(f"LLM Summarization failed: {e}")
+        logger.error(f"Batch LLM Summarization failed: {e}")
         return PipelineResult(success=False, errors=[str(e)], stage="summarization", timing=time.time() - start_time)

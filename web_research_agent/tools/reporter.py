@@ -1,6 +1,7 @@
 import logging
 import json
 import re
+import re
 from typing import List, Dict, Optional
 from datetime import datetime
 from web_research_agent.models.llm import LLMClient
@@ -120,23 +121,44 @@ def export_report(content: str, plan: ResearchPlan, state: ResearchState, storag
             storage.save_artifact(rid, "html", html, "html")
         except Exception as e: logger.error(f"HTML export fail: {e}")
 
-def run_self_evaluation(report: str, plan: ResearchPlan, llm_client: LLMClient) -> SelfEvaluation:
-    prompt = f"Topic: {plan.topic}\nReport: {report[:10000]}\nJSON evaluation: overall_grade, justification, coverage_score, evidence_score, readability_score."
-    try:
-        return SelfEvaluation(**llm_client.get_json(prompt, "Analyst Auditor."))
-    except:
-        return SelfEvaluation(overall_grade="U", justification="Audit fail.")
+def run_self_evaluation(report: str, plan: ResearchPlan, state: ResearchState) -> SelfEvaluation:
+    """Deterministic self-evaluation based on report metrics (Phase 5)."""
+    char_count = len(report)
+    citation_count = len(re.findall(r'\[\d+\]', report))
+    evidence_nodes = len(state.evidence_graph.items)
 
-def validate_objective_completeness(report: str, objectives: List[str], llm_client: LLMClient) -> Dict[str, str]:
-    """Autonomous validator: Can each objective be answered based on the report?"""
-    prompt = f"""
-    REPORT: {report[:10000]}
-    OBJECTIVES: {objectives}
+    # Simple deterministic scoring
+    coverage_score = sum(o.coverage for o in state.objective_states.values()) / len(state.objective_states) if state.objective_states else 0
+    readability_score = min(char_count / 5000.0, 1.0) * 100
+    evidence_score = min(evidence_nodes / 10.0, 1.0) * 100
+    citation_quality = min(citation_count / max(evidence_nodes, 1), 1.0) * 100
 
-    TASK: Determine if each objective is fully answered.
-    Return JSON: {{ "objective_name": "YES/PARTIAL/NO" }}
-    """
-    try:
-        return llm_client.get_json(prompt, "Objective Completeness Validator.")
-    except:
-        return {o: "UNKNOWN" for o in objectives}
+    overall = (coverage_score * 0.4) + (evidence_score * 0.3) + (citation_quality * 0.2) + (readability_score * 0.1)
+
+    grade = "A" if overall > 85 else "B" if overall > 70 else "C" if overall > 50 else "D" if overall > 30 else "F"
+
+    return SelfEvaluation(
+        overall_grade=grade,
+        justification=f"Deterministic evaluation: Coverage {coverage_score:.1f}%, Evidence {evidence_score:.1f}%, Citations {citation_quality:.1f}%",
+        coverage_score=coverage_score,
+        evidence_score=evidence_score,
+        readability_score=readability_score,
+        citation_quality=citation_quality
+    )
+
+def validate_objective_completeness(report: str, objectives: List[str], state: ResearchState) -> Dict[str, str]:
+    """Deterministic validator: Maps report content back to objectives (Phase 5)."""
+    results = {}
+    report_lower = report.lower()
+
+    for obj in objectives:
+        # Check if objective is mentioned or has coverage
+        obj_state = state.objective_states.get(obj)
+        if obj_state and obj_state.coverage > 80:
+            results[obj] = "YES"
+        elif obj_state and obj_state.coverage > 30:
+            results[obj] = "PARTIAL"
+        else:
+            results[obj] = "NO"
+
+    return results

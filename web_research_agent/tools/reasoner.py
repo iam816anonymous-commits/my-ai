@@ -36,16 +36,16 @@ def calculate_production_confidence(inp: ConfidenceInput) -> ConfidenceBreakdown
     # 4. Search Exhaustiveness (15%)
     exhaustiveness = min((inp.iterations / 3.0), 1.0) * 100 # Target 3 cycles
 
-    # Weighted Sum
-    overall = (avg_coverage * 0.40) + \
+    # Weighted Sum (Phase 6 - Ensuring 1.0 sum)
+    overall = (avg_coverage * 0.35) + \
               (authority_score * 0.15) + \
               (domain_diversity * 0.10) + \
               (density_score * 0.15) + \
-              (agreement_score * 0.10) + \
+              (agreement_score * 0.15) + \
               (exhaustiveness * 0.10)
 
     # Hard Cap: No evidence => Zero confidence
-    if not summaries or avg_coverage < 5:
+    if not inp.summaries or avg_coverage < 5:
         overall = 0.0
 
     explanation = (
@@ -100,7 +100,6 @@ def evaluate_research(query: str, plan: ResearchPlan, summaries: List[ArticleSum
         }}],
         "contradictions": [],
         "evidence_items": [],
-        "gaps": [],
         "follow_up_queries": [],
         "continue_research": bool
     }}
@@ -109,9 +108,17 @@ def evaluate_research(query: str, plan: ResearchPlan, summaries: List[ArticleSum
     try:
         result = llm_client.get_json(prompt, "Expert Research Analyst. JSON only.", response_model=ReasoningResult)
 
-        # Post-process to ensure attempts are tracked and confidence is calculated
+        # Deterministic Post-processing (Phase 4)
         res_states = []
         total_evidence = 0
+        evidence_topics = set()
+
+        # 1. Map evidence items to topics for gap analysis
+        for item in result.evidence_items:
+            # Simple keyword extraction from claim
+            words = set(re.findall(r'\w{4,}', item.claim.lower()))
+            evidence_topics.update(words)
+
         for obj in result.objective_states:
             prev = previous_states.get(obj.objective) if previous_states else None
             obj.search_attempts = (prev.search_attempts if prev else 0) + 1
@@ -121,6 +128,21 @@ def evaluate_research(query: str, plan: ResearchPlan, summaries: List[ArticleSum
 
         result.objective_states = res_states
 
+        # 2. Deterministic Gap Analysis (Phase 4)
+        result.gaps = []
+        for obj in res_states:
+            if obj.coverage < 70:
+                # Check if we have any evidence matching objective keywords
+                obj_keywords = set(re.findall(r'\w{4,}', obj.objective.lower()))
+                if not (obj_keywords & evidence_topics):
+                    result.gaps.append(ResearchGap(
+                        topic=obj.objective,
+                        reason_missing="No direct evidence found matching objective keywords.",
+                        suggested_queries=[f"{obj.objective} detailed evidence", f"{obj.objective} data statistics"],
+                        estimated_confidence_improvement=15.0
+                    ))
+
+        # 3. Deterministic Confidence (Phase 4)
         confidence = calculate_production_confidence(ConfidenceInput(
             objective_states=res_states,
             summaries=summaries,
