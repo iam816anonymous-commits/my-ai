@@ -18,7 +18,8 @@ def check_dependencies():
         "trafilatura",
         "typer",
         "requests",
-        "psutil"
+        "psutil",
+        "nest_asyncio"
     ]
 
     missing = []

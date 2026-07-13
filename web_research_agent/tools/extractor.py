@@ -83,25 +83,43 @@ def extract_text_v2(html: str) -> str:
         logger.error(f"Extraction error: {e}")
         return ""
 
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+import math
+from collections import Counter
 
 def validate_semantic_relevance_deterministic(text: str, query: str) -> bool:
-    """Deterministic semantic check using TF-IDF and Cosine Similarity (Phase 2)."""
+    """Deterministic semantic check using native Cosine Similarity (Phase 2)."""
     if not text or not query: return False
 
     try:
-        vectorizer = TfidfVectorizer(stop_words='english')
-        tfidf = vectorizer.fit_transform([query, text])
-        similarity = cosine_similarity(tfidf[0:1], tfidf[1:2])[0][0]
+        def get_cosine(vec1, vec2):
+            intersection = set(vec1.keys()) & set(vec2.keys())
+            numerator = sum([vec1[x] * vec2[x] for x in intersection])
 
-        # Threshold for relevance. 0.05 is conservative but helps filter complete junk
+            sum1 = sum([vec1[x]**2 for x in vec1.keys()])
+            sum2 = sum([vec2[x]**2 for x in vec2.keys()])
+            denominator = math.sqrt(sum1) * math.sqrt(sum2)
+
+            if not denominator:
+                return 0.0
+            else:
+                return float(numerator) / denominator
+
+        def text_to_vector(t):
+            words = re.findall(r'\w+', t.lower())
+            return Counter(words)
+
+        vector1 = text_to_vector(query)
+        vector2 = text_to_vector(text)
+
+        similarity = get_cosine(vector1, vector2)
+
+        # Threshold for relevance. 0.05 is conservative for word-based similarity
         return similarity > 0.05
     except Exception as e:
         logger.warning(f"Deterministic semantic validation error: {e}")
         return True
 
-def extract_all(html_contents: Dict[str, str], query: str = "") -> PipelineResult[Dict[str, str]]:
+def extract_all(html_contents: Dict[str, str], query: str = "") -> PipelineResult[ExtractionResult]:
     """Parallel extraction with stage metrics and validation."""
     start_time = time.time()
     results = {}

@@ -147,7 +147,7 @@ class SearchEngineManager:
                         c_url = canonicalize_url(url)
                         info = get_source_v7_info(c_url, r.get("title", ""))
                         if not info.rejection_reason and c_url not in found:
-                             info.source_type = "Fallback"
+                             info.type = "Fallback"
                              info.score -= 20
                              found[c_url] = info
 

@@ -8,7 +8,7 @@ from web_research_agent.config import MAX_SUMMARY_WORDS
 
 logger = logging.getLogger(__name__)
 
-def summarize_article(text: str, llm_client: LLMClient, query: str = "", url: str = "") -> PipelineResult[str]:
+def summarize_article(text: str, llm_client: LLMClient, query: str = "", url: str = "") -> PipelineResult[List[Dict[str, str]]]:
     """Compatibility wrapper for individual article summarization."""
     return batch_summarize_documents([{"url": url, "text": text}], llm_client, query)
 
